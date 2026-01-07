@@ -1,4 +1,8 @@
-# SIPHON
+<p align="center">
+  <img src="assets/logo.png" alt="SIPHON" width="220" />
+</p>
+
+<h1 align="center">SIPHON</h1>
 
 <div align="center">
 
@@ -52,6 +56,12 @@ Dispatch(agent_name="receptionist", sip_number="+1234567890")
 # Go live
 agent.start()
 ```
+
+## System Overview
+
+<p align="center">
+  <img src="assets/flow.png" alt="SIPHON system overview" width="900" />
+</p>
 
 ## 📅 Roadmap
 
