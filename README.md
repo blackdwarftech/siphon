@@ -61,7 +61,7 @@ agent.start()
 ## 🤝 Community
 
 - **Star this repository** to get notified of the launch!
-- Follow our progress on [Twitter/X](https://x.com/blackdwarf).
+- Follow our progress on [Twitter/X](https://x.com/blackdwarf__).
 
 ## 📄 License
 
