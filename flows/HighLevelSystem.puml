@@ -1,0 +1,79 @@
+@startuml SIPHON_HighLevel_System
+title SIPHON – System Overview
+
+skinparam componentStyle rectangle
+
+actor "Caller\n(PSTN User)" as Caller
+
+package "Telephony Network" {
+  [PSTN / Mobile Network] as PSTN
+  component "SIP / Voice Provider" as SIPProvider
+}
+
+package "LiveKit (Cloud/Self-hosted)" {
+  component "Realtime Media & SIP" as Realtime
+}
+
+package "SIPHON Framework" {
+  package "Telephony" {
+    component "Inbound" as TelephonyInbound
+    component "Outbound" as TelephonyOutbound
+  }
+
+  package "Agents" {
+    component "Agent Runner" as AgentRunner
+    component "Agent Core" as AgentCore
+    component "Agent Components" as AgentComponents
+  }
+
+  package "Config & Data" {
+    component "Call Recording" as CallRecording
+    component "Call Metadata" as CallMetadata
+    component "Transcription" as CallTranscription
+  }
+
+  package "Plugins" {
+    component "LLM Plugins" as LLMPlugins
+    component "STT Plugins" as STTPlugins
+    component "TTS Plugins" as TTSPlugins
+  }
+
+  package "Tools" {
+    component "Agent Tools" as AgentTools
+  }
+}
+
+package "External AI Services" {
+  [LLM Providers] as LLMs
+  [STT Providers] as STTs
+  [TTS Providers] as TTSs
+}
+
+Caller --> PSTN : Phone Call
+PSTN --> SIPProvider : SIP/PSTN
+SIPProvider --> Realtime : SIP Trunk\n(SIP + RTP)
+
+TelephonyInbound --> Realtime : Inbound SIP dispatch\nrules & trunks
+TelephonyOutbound --> Realtime : Outbound calls\n(rooms + jobs)
+AgentRunner --> Realtime : Register workers /\nconsume jobs
+AgentCore --> Realtime : Join rooms &\nprocess media
+
+AgentCore --> AgentComponents : use factories\n(LLM/STT/TTS)
+AgentComponents --> LLMPlugins
+AgentComponents --> STTPlugins
+AgentComponents --> TTSPlugins
+
+AgentCore --> AgentTools : invoke tools\n(domain APIs, DB, side effects)
+
+LLMPlugins --> LLMs
+STTPlugins --> STTs
+TTSPlugins --> TTSs
+
+AgentCore --> CallRecording : call audio\n(recordings)
+AgentCore --> CallMetadata : call metadata\n(status, numbers, etc.)
+AgentCore --> CallTranscription : conversational\ntranscripts
+
+TelephonyInbound --> CallMetadata : inbound trunk /\nnumber metadata
+TelephonyOutbound --> CallMetadata : outbound\ncampaign metadata
+
+@enduml

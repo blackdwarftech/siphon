@@ -1,0 +1,100 @@
+@startuml SIPHON_Architecture
+title SIPHON – LiveKit Telephony AI Framework
+
+skinparam componentStyle rectangle
+
+actor "Caller\n(PSTN User)" as Caller
+
+package "Telephony Layer" {
+  [PSTN / Phone Network] as PSTN
+  component "SIP Provider\n(External)" as SIPProvider
+  component "LiveKit SIP\nGateway" as LKSIP
+
+  PSTN --> SIPProvider : Inbound/Outbound\nPhone Calls (SIP/PSTN)
+  SIPProvider --> LKSIP : SIP Trunk\n(SIP Signaling + RTP)
+}
+
+package "LiveKit Core" {
+  component "LiveKit Server/Cloud" as LKCore
+  component "Room\n(inbound-call-*)" as LKRoom
+  component "Agents Worker\n(livekit-agents)" as LKWorker
+
+  LKSIP --> LKCore : SIP Integration\n(Room + Job Dispatch)
+  LKCore --> LKRoom : Create/Manage Room
+  LKCore --> LKWorker : Create Job\n(for AgentName)
+}
+
+package "SIPHON – Telephony" {
+  package "siphon.telephony.inbound" {
+    [Trunk] as TrunkHelper
+    [Dispatch] as InboundDispatch
+  }
+
+  InboundDispatch --> TrunkHelper : get_trunk / create_trunk
+  InboundDispatch --> LKCore : CreateSIPDispatchRule\n(api.LiveKitAPI.sip)
+}
+
+package "SIPHON – Agent Runtime" {
+  package "siphon.agent.runner" {
+    [Agent Runner] as AgentRunner
+  }
+
+  package "siphon.agent.core" {
+    [entrypoint(ctx)] as Entrypoint
+    [AgentSetup\n(voice_agent.AgentSetup)] as AgentSetup
+    [AgentSession\n(livekit.agents.voice)] as AgentSession
+    [monitor_call] as MonitorCall
+  }
+
+  package "siphon.agent.agent_components" {
+    [get_llm_component] as LLMFactory
+    [get_stt_component] as STTFactory
+    [get_tts_component] as TTSFactory
+  }
+
+  package "siphon.plugins" {
+    [LLM Plugins\n(openai, anthropic, groq, ...)] as LLMPlugins
+    [STT Plugins\n(deepgram, assemblyai, ...)] as STTPlugins
+    [TTS Plugins\n(elevenlabs, cartesia, ...)] as TTSPlugins
+  }
+
+  AgentRunner --> Entrypoint : WorkerOptions.entrypoint_fnc
+  LKWorker --> Entrypoint : invoke per Job\n(with ctx.job.metadata)
+
+  Entrypoint --> LLMFactory : from metadata.agent_config.llm
+  Entrypoint --> STTFactory : from metadata.agent_config.stt
+  Entrypoint --> TTSFactory : from metadata.agent_config.tts
+
+  LLMFactory --> LLMPlugins : LLM.from_config()
+  STTFactory --> STTPlugins : STT.from_config()
+  TTSFactory --> TTSPlugins : TTS.from_config()
+
+  Entrypoint --> AgentSetup : config, greetings,\n(system_instructions, etc.)
+  Entrypoint --> AgentSession : build with LLM/STT/TTS,\nVAD, turn detection
+  AgentSession --> LKRoom : join room,\nhandle audio/media
+  AgentSetup --> LKRoom : participate as\nAI Voice Agent
+  Entrypoint --> MonitorCall : monitor SIP participant\n(sip.callStatus)
+}
+
+package "SIPHON – Config & Storage" {
+  package "siphon.config" {
+    [get_logger] as GetLogger
+    [HangupCall] as HangupCall
+    [CallTranscription] as CallTranscription
+    [CallRecording] as CallRecording
+    [CallMetadata] as CallMetadata
+    [DataStorage] as DataStorage
+  }
+
+  AgentSetup -down-|> HangupCall
+  AgentSetup -down-|> CallTranscription
+
+  AgentSetup --> CallRecording : start_recording()\nstop_recording()
+  AgentSetup --> CallMetadata : save_call_metadata()
+  CallTranscription --> DataStorage : save transcripts
+}
+
+Caller --> PSTN
+LKRoom --> LKSIP : Remote Participant\n(SIP leg with attributes:\n"sip.callStatus", "sip.phoneNumber")
+
+@enduml

@@ -1,0 +1,56 @@
+@startuml SIPHON_Agent_Lifecycle
+title SIPHON – Agent Worker & Session Lifecycle
+
+participant "LiveKit Agents Worker" as Worker
+participant "entrypoint(ctx)" as Entrypoint
+participant "LLM/STT/TTS Factories" as Factories
+participant "AgentSetup" as AgentSetup
+participant "AgentSession" as AgentSession
+participant "Room (ctx.room)" as Room
+participant "Config Mixins\n(HangupCall, CallTranscription)" as ConfigMixins
+
+== Job Start ==
+Worker -> Entrypoint: entrypoint(ctx)
+Entrypoint -> Entrypoint: _load_metadata()
+Entrypoint -> Entrypoint: _derive_agent_config()
+
+== Build Components ==
+Entrypoint -> Factories: get_llm_component(llm_cfg)
+Entrypoint -> Factories: get_stt_component(stt_cfg)
+Entrypoint -> Factories: get_tts_component(tts_cfg)
+Factories --> Entrypoint: LLM/STT/TTS instances
+Entrypoint -> Entrypoint: _resolve_session_components()
+
+== Construct Agent & Session ==
+Entrypoint -> AgentSetup: __init__(config, instructions,...)
+AgentSetup -> ConfigMixins: init HangupCall,\nCallTranscription
+Entrypoint -> AgentSession: _build_agent_session(...)
+Entrypoint -> AgentSession: start(room=ctx.room, agent=AgentSetup)
+AgentSession -> Room: join as AI participant
+
+== on_enter ==
+AgentSession -> AgentSetup: on_enter()
+AgentSetup -> AgentSetup: mark call_start_time
+AgentSetup -> AgentSetup: setup_recording() [if enabled]
+AgentSetup -> AgentSetup: setup_conversation_monitoring() [if enabled]
+AgentSetup -> AgentSession: generate_reply(greeting)
+
+== Live Conversation ==
+Room -> AgentSession: user audio
+AgentSession -> AgentSetup: callbacks / tools
+AgentSession -> Factories: transcribe, reason, synthesize
+AgentSession -> Room: agent speech
+
+== Monitoring & Call End ==
+Entrypoint -> Entrypoint: monitor_call(ctx, agent)
+Entrypoint -> Room: poll remote_participants\nfor sip.callStatus
+Room --> Entrypoint: active / hangup / timeout
+Entrypoint -> AgentSetup: handle_unanswered_call()\n(if timeout/never active)
+
+== on_exit ==
+AgentSession -> AgentSetup: on_exit()
+AgentSetup -> AgentSetup: stop_recording() [if enabled]
+AgentSetup -> ConfigMixins: save_call_metadata()
+AgentSetup -> ConfigMixins: _save_conversation() [if enabled]
+
+@enduml
