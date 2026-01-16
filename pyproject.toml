@@ -1,0 +1,127 @@
+[build-system]
+requires = ["hatchling>=1.0.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "siphon-ai"
+version = "0.1.0"
+description = "SIPHON: Production-ready AI telephony/calling agents in few lines of code."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+  { name = "BLACKDWARF", email = "hi@blackdwarf.in" },
+]
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Intended Audience :: Developers",
+  "Natural Language :: English",
+  "Typing :: Typed",
+]
+keywords = [
+  "livekit",
+  "livekit-agents",
+  "telephony",
+  "sip",
+  "pstn",
+  "webrtc",
+  "voice-ai",
+  "voice-agents",
+  "ai-telephony",
+  "ai-calling",
+  "calling-agent",
+  "contact-center",
+  "call-center",
+  "ivr",
+  "conversational-ai",
+  "speech-to-text",
+  "text-to-speech",
+  "realtime",
+  "realtime-ai",
+  "voice-to-voice",
+  "telephony-api",
+  "voice-communications",
+  "ai-phone-systems",
+  "automated-calling",
+  "voice-assistant",
+  "ivr-systems",
+  "call-routing",
+  "voice-messaging",
+  "contact-center-solutions",
+  "call-analytics",
+  "voice-workflow",
+  "telephony-automation",
+  "voice-integration",
+  "ai-call-processing",
+  "voice-orchestration",
+  "telephony-devices",
+  "voice-infrastructure",
+  "telephony-platform",
+  "voice-api",
+  "telephony-sdk",
+  "voice-telephony",
+  "ai-voice-systems",
+  "voice-automation",
+  "telephony-integrations",
+  "voice-communication-platform",
+  "telephony-ai-solutions",
+  "voice-contact-center",
+  "telephony-crm-integration",
+  "ai-calling-crm-integration",
+  "voice-calling-platform",
+  "telephony-voice-platform",
+]
+
+# For now, declare the runtime dependencies directly. This means
+# `pip install siphon-ai` (or `uv add siphon-ai`) will install
+# everything the framework needs at runtime.
+# You can later refine this into smaller core deps + extras.
+
+dependencies = [
+    "livekit",
+    "livekit-api",
+    "livekit-agents",
+    "boto3",
+    "python-dotenv",
+    "livekit-plugins-noise-cancellation",
+    "livekit-agents[silero]",
+    "livekit-agents[turn-detector]",
+    "pymongo",
+    "redis",
+    "sqlalchemy",
+    "psycopg2",
+    "livekit-agents[openai]",
+    "livekit-agents[google]",
+    "livekit-agents[anthropic]",
+    "livekit-agents[groq]",
+    "livekit-agents[mistralai]",
+    "livekit-agents[deepgram]",
+    "livekit-agents[assemblyai]",
+    "livekit-agents[cartesia]",
+    "livekit-agents[sarvam]",
+    "livekit-agents[elevenlabs]",
+    "livekit-agents[rime]",
+]
+
+[project.urls]
+Homepage = "https://siphon.blackdwarf.in/"
+Source = "https://github.com/blackdwarftech/siphon"
+
+[tool.mypy]
+# Silence missing import errors for optional dependencies
+disable_error_code = ["import-not-found", "import-untyped", "untyped-decorator"]
+
+# Prevent the "Any" contagion from triggering strict errors
+# (These flags are normally True in strict mode)
+warn_return_any = false
+disallow_any_generics = false
+disallow_subclassing_any = false
+disallow_untyped_calls = false
+
+[tool.hatch.build.targets.wheel]
+packages = ["siphon"]

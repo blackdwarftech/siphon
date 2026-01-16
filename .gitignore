@@ -1,0 +1,11 @@
+.env
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+BRD.md
+SRD.md
+.env.local
+.env.*
+requirements.txt
