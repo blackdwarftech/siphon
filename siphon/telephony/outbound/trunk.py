@@ -116,3 +116,67 @@ class Trunk:
         finally:
             await lkapi.aclose()
 
+
+    async def delete_trunk(
+        self, 
+        trunk_id: Optional[str] = None,
+        sip_number: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Delete an outbound SIP trunk by trunk_id or sip_number.
+
+        Args:
+            trunk_id: The SIP trunk ID to delete (optional)
+            sip_number: The phone number to find and delete the trunk (optional)
+
+        Returns a dict with keys:
+          - success: True if deleted, False otherwise
+          - trunk_id: the deleted trunk id if successful
+          - Error: error message if failed
+        """
+        if not trunk_id and not sip_number:
+            return {
+                "success": False,
+                "trunk_id": None,
+                "Error": "Either trunk_id or sip_number must be provided"
+            }
+
+        lkapi = api.LiveKitAPI()
+
+        try:
+            # If sip_number provided, first find the trunk_id
+            if not trunk_id and sip_number:
+                # List all trunks and find by number
+                request = ListSIPOutboundTrunkRequest(numbers=[sip_number])
+                trunks = await lkapi.sip.list_outbound_trunk(request)
+                
+                for trunk in trunks.items or []:
+                    if sip_number in trunk.numbers:
+                        trunk_id = trunk.sip_trunk_id
+                        break
+                
+                if not trunk_id:
+                    await lkapi.aclose()
+                    return {
+                        "success": False,
+                        "trunk_id": None,
+                        "Error": f"No trunk found for number {sip_number}"
+                    }
+
+            # Delete the trunk using the trunk_id
+            request = api.DeleteSIPTrunkRequest(sip_trunk_id=trunk_id)
+            await lkapi.sip.delete_sip_trunk(request)
+            
+            return {
+                "success": True,
+                "trunk_id": trunk_id,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "trunk_id": trunk_id,
+                "Error": e,
+            }
+        finally:
+            await lkapi.aclose()
+
+
