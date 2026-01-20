@@ -169,3 +169,48 @@ class TTS(ClientWrapperMixin):
             voice=cfg.get("voice", "ash"),
             instructions=cfg.get("instructions", None),
         )
+
+class Realtime(ClientWrapperMixin):
+    """OpenAI-backed realtime wrapper around the LiveKit OpenAI plugin."""
+    def __init__(
+        self,
+        model: Optional[str] = "gpt-realtime",
+        api_key: Optional[str] = None,
+        voice: Optional[str] = "alloy",
+        temperature: Optional[int] = 0.3
+    ) -> None:
+        self.model = model
+        self.api_key = api_key
+        self.voice = voice
+        self.temperature = temperature
+
+        if not self.api_key:
+            raise ValueError("OPENAI_API_KEY environment variable is not set")
+
+        self._client = self._build_client()
+
+    def _build_client(self):
+        return openai.realtime.RealtimeModel(
+            model=self.model,
+            api_key=self.api_key,
+            voice=self.voice,
+            temperature=self.temperature,
+        )
+
+    # JSON-serializable view (no Python objects)
+    def to_config(self) -> dict:
+        return {
+            "provider": "openai",
+            "model": self.model,
+            "voice": self.voice,
+            "temperature": self.temperature
+        }
+
+    # Recreate Realtime from config dict
+    @classmethod
+    def from_config(cls, cfg: dict) -> "Realtime":
+        return cls(
+            model=cfg.get("model", "gpt-realtime"),
+            voice=cfg.get("voice", "alloy"),
+            temperature=cfg.get("temperature", 0.3)
+        )

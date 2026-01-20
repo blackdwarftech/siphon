@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "siphon-ai"
-version = "0.1.0"
+version = "0.1.8"
 description = "SIPHON: Production-ready AI telephony/calling agents in few lines of code."
 readme = "README.md"
 requires-python = ">=3.10"
