@@ -199,6 +199,5 @@ If you’re unsure how best to contribute or want guidance on an idea:
 
 - Open a GitHub issue marked as **question** or **proposal**.
 - Or reach out via the project’s listed contact channels.
-- Our [Discord server](https://discord.gg/YOUR_INVITE_CODE) is constantly open; if you are unsure about anything, it is a good place to discuss. We’d love to collaborate and will always be friendly.
 
 Thank you again for helping improve SIPHON!
