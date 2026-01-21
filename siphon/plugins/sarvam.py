@@ -52,7 +52,7 @@ class TTS(ClientWrapperMixin):
     """Sarvam-backed TTS wrapper around the Sarvam plugin."""
     def __init__(
         self,
-        target_language_code: Optional[str] = "hi-IN",
+        target_language_code: Optional[str] = "en-IN",
         model: Optional[str] = "bulbul:v2",
         speaker: Optional[str] = "anushka",
         speech_sample_rate: Optional[int] = 22050,
