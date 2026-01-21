@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 from livekit import api
 from .trunk import Trunk
 import json
@@ -11,7 +11,7 @@ class Dispatch:
     def __init__(
         self,
         agent_name: Optional[str] = "Calling-Agent-System",
-        dispatch_name: str = None,
+        dispatch_name: Optional[str] = None,
         sip_trunk_id: Optional[str] = None,
         sip_number: Optional[str] = None,
         llm: Optional[Any] = None,
@@ -28,9 +28,6 @@ class Dispatch:
         """
         self.agent_name = agent_name
         self.dispatch_name = dispatch_name
-
-        if self.dispatch_name is None:
-            raise ValueError("dispatch_name must be provided")
 
         self.sip_trunk_id = sip_trunk_id
         self.sip_number = sip_number
@@ -155,3 +152,160 @@ class Dispatch:
 
     def agent(self):
        return asyncio.run(self.agent_dispatch())
+
+
+    async def get_dispatch_rule(
+        self,
+        dispatch_id: Optional[str] = None,
+        sip_number: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Find dispatch rule(s) by dispatch_id or sip_number.
+
+        Args:
+            dispatch_id: The dispatch rule ID to find (optional)
+            sip_number: The phone number to find dispatch rules (optional)
+
+        Returns a dict with keys:
+          - dispatch_rules: list of dispatch rule dicts (each with id, name, trunk_ids)
+          - count: number of dispatch rules found
+          - Error: error message if failed
+        """
+        if not dispatch_id and not sip_number:
+            return {
+                "dispatch_rules": [],
+                "count": 0,
+                "Error": "Either dispatch_id or sip_number must be provided"
+            }
+
+        lkapi = api.LiveKitAPI()
+
+        try:
+            # List all dispatch rules
+            request = api.ListSIPDispatchRuleRequest()
+            dispatch_rules = await lkapi.sip.list_sip_dispatch_rule(request)
+
+            matching_rules = []
+
+            # If dispatch_id provided, find by ID
+            if dispatch_id:
+                for rule in dispatch_rules.items or []:
+                    if rule.sip_dispatch_rule_id == dispatch_id:
+                        matching_rules.append({
+                            "dispatch_id": rule.sip_dispatch_rule_id,
+                            "name": getattr(rule, "name", None),
+                            "trunk_ids": getattr(rule, "trunk_ids", []),
+                        })
+            
+            # If sip_number provided, find ALL rules using trunks with this number
+            elif sip_number:
+                # First find the trunk with this number
+                trunk = Trunk()
+                trunk_info = await trunk.get_trunk(sip_number)
+                trunk_id = trunk_info.get("trunk_id")
+
+                if trunk_id:
+                    # Find ALL dispatch rules that use this trunk
+                    for rule in dispatch_rules.items or []:
+                        trunk_ids = getattr(rule, "trunk_ids", []) or []
+                        if trunk_id in trunk_ids:
+                            matching_rules.append({
+                                "dispatch_id": rule.sip_dispatch_rule_id,
+                                "name": getattr(rule, "name", None),
+                                "trunk_ids": trunk_ids,
+                            })
+
+            if matching_rules:
+                return {
+                    "dispatch_rules": matching_rules,
+                    "count": len(matching_rules),
+                }
+            else:
+                return {
+                    "dispatch_rules": [],
+                    "count": 0,
+                    "Error": "No dispatch rule found"
+                }
+        except Exception as e:
+            return {
+                "dispatch_rules": [],
+                "count": 0,
+                "Error": str(e),
+            }
+        finally:
+            await lkapi.aclose()
+
+
+    async def delete_dispatch_rule(
+        self,
+        dispatch_id: Optional[str] = None,
+        sip_number: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Delete dispatch rule(s) by dispatch_id or sip_number.
+
+        When using sip_number, ALL dispatch rules using that number will be deleted.
+
+        Args:
+            dispatch_id: The dispatch rule ID to delete (optional)
+            sip_number: The phone number - deletes ALL dispatch rules using this number (optional)
+
+        Returns a dict with keys:
+          - success: True if at least one rule was deleted
+          - deleted_count: number of dispatch rules deleted
+          - deleted_ids: list of deleted dispatch rule IDs
+          - Error: error message if failed
+        """
+        if not dispatch_id and not sip_number:
+            return {
+                "success": False,
+                "deleted_count": 0,
+                "deleted_ids": [],
+                "Error": "Either dispatch_id or sip_number must be provided"
+            }
+
+        lkapi = api.LiveKitAPI()
+        deleted_ids = []
+
+        try:
+            # If dispatch_id provided, delete that specific rule
+            if dispatch_id:
+                request = api.DeleteSIPDispatchRuleRequest(sip_dispatch_rule_id=dispatch_id)
+                await lkapi.sip.delete_sip_dispatch_rule(request)
+                deleted_ids.append(dispatch_id)
+            
+            # If sip_number provided, find and delete ALL matching rules
+            elif sip_number:
+                # First find all matching dispatch rules
+                rule_info = await self.get_dispatch_rule(sip_number=sip_number)
+                
+                if rule_info.get("count", 0) == 0:
+                    await lkapi.aclose()
+                    return {
+                        "success": False,
+                        "deleted_count": 0,
+                        "deleted_ids": [],
+                        "Error": f"No dispatch rule found for number {sip_number}"
+                    }
+                
+                rules_to_delete = rule_info.get("dispatch_rules", [])
+                
+                # Delete ALL matching rules
+                for rule in rules_to_delete:
+                    rule_id = rule["dispatch_id"]
+                    request = api.DeleteSIPDispatchRuleRequest(sip_dispatch_rule_id=rule_id)
+                    await lkapi.sip.delete_sip_dispatch_rule(request)
+                    deleted_ids.append(rule_id)
+
+            return {
+                "success": True,
+                "deleted_count": len(deleted_ids),
+                "deleted_ids": deleted_ids,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "deleted_count": len(deleted_ids),
+                "deleted_ids": deleted_ids,
+                "Error": str(e),
+            }
+        finally:
+            await lkapi.aclose()
