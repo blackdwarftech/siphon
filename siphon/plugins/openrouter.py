@@ -8,7 +8,7 @@ class LLM(ClientWrapperMixin):
     """OpenRouter-backed LLM wrapper for LiveKit's OpenAI-compatible plugin."""
     def __init__(
         self,
-        model: Optional[str] = "x-ai/grok-4.1-fast",
+        model: Optional[str] = "openai/gpt-4.1-nano",
         base_url: Optional[str] = "https://openrouter.ai/api/v1",
         api_key: Optional[str] = None,
         temperature: Optional[float] = 0.3,

@@ -4,6 +4,7 @@ from livekit.agents.voice import Agent
 from livekit import rtc
 from livekit.agents import ChatContext
 from siphon.config import get_logger, HangupCall, CallTranscription
+from siphon.agent.internal_prompts import call_agent_prompt, proactive_agent_prompt, datetime_awareness_prompt
 import os
 
 logger = get_logger("calling-agent")
@@ -36,7 +37,19 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
         self.config = config
         self.send_greeting = send_greeting
         self.greeting_instructions = greeting_instructions
-        self.system_instructions = system_instructions
+        
+        # Combine user's system instructions with internal prompts:
+        # 1. User's instructions (their agent's role/personality)
+        # 2. Tool confidentiality rules (don't expose internal capabilities)
+        # 3. Proactive behavior (task memory, acknowledgment handling, initiative)
+        # 4. DateTime awareness (check current date/time before time-related operations)
+        self.system_instructions = (
+            system_instructions + 
+            "\n\n" + call_agent_prompt + 
+            "\n\n" + proactive_agent_prompt +
+            "\n\n" + datetime_awareness_prompt
+        )
+        
         self.interruptions_allowed = interruptions_allowed
 
         # Call Tracking

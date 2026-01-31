@@ -17,13 +17,15 @@ class Agent:
         greeting_instructions: Optional[str] = "Greet and introduce yourself briefly",
         system_instructions: Optional[str] = "You are a helpful voice assistant",
         allow_interruptions: Optional[bool] = True,
-        min_silence_duration: Optional[float] = 0.25,
-        activation_threshold: Optional[float] = 0.55,
-        prefix_padding_duration: Optional[float] = 0.25,
+        min_silence_duration: Optional[float] = 2.0,
+        activation_threshold: Optional[float] = 0.4,
+        prefix_padding_duration: Optional[float] = 0.5,
         min_endpointing_delay: Optional[float] = 0.45,
-        max_endpointing_delay: Optional[float] = 0.9,
+        max_endpointing_delay: Optional[float] = 3.0,
         min_interruption_duration: Optional[float] = 0.08,
-        tools: Optional[list[Any]] = None
+        tools: Optional[list[Any]] = None,
+        google_calendar: Optional[bool] = False,
+        date_time: Optional[bool] = True
     ) -> None:
         self._default_agent_name = agent_name
 
@@ -45,6 +47,8 @@ class Agent:
         self.min_interruption_duration = min_interruption_duration
         
         self.tools = tools or []
+        self.google_calendar = google_calendar
+        self.date_time = date_time
 
         self.entrypoint = partial(
             entrypoint,
@@ -62,6 +66,8 @@ class Agent:
             max_endpointing_delay=self.max_endpointing_delay,
             min_interruption_duration=self.min_interruption_duration,
             tools=self.tools,
+            google_calendar=self.google_calendar,
+            date_time=self.date_time,
         )
 
     def _run(self, agent_name: Optional[str], mode: str) -> None:
