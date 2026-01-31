@@ -59,8 +59,8 @@ OPENROUTER_API_KEY=your_openrouter_api_key
 # TTS Provider (Sarvam AI)
 SARVAM_API_KEY=your_sarvam_api_key
 
-# STT Provider (Sarvam AI)
-# Uses same SARVAM_API_KEY
+# STT Provider (Cartesia)
+CARTESIA_API_KEY=your_cartesia_api_key
 
 # LiveKit Configuration
 LIVEKIT_URL=wss://your-livekit-url
@@ -147,7 +147,7 @@ This example provides a starting point. For detailed customization options, refe
 - **[Inbound Calling](https://siphon.blackdwarf.in/docs/calling/inbound/overview)** - Complete guide to inbound call configuration
 - **[Outbound Calling](https://siphon.blackdwarf.in/docs/calling/outbound/overview)** - Complete guide to outbound call configuration
 - **[Agent Configuration](https://siphon.blackdwarf.in/docs/agents/configuration)** - Advanced agent settings and customization options
-- **[Call Data & Observability](/docs/agents/call-data)** - Recordings, transcripts, and metadata
+- **[Call Data & Observability](https://siphon.blackdwarf.in/docs/agents/call-data)** - Recordings, transcripts, and metadata
 
 ## How It Works
 
