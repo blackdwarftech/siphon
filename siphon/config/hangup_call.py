@@ -33,7 +33,7 @@ class HangupCall(CallRecording,CallMetadata):
         # saving additional metadata, recordings, or transcriptions.
         self._unanswered_call = False
 
-    @function_tool
+    @function_tool()
     async def end_call(self, ctx: RunContext):
         """Tool: end the current call when the user asks to hang up or a scenario comes where you need to hangup."""
 

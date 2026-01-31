@@ -191,7 +191,13 @@ AWS_S3_FORCE_PATH_STYLE=true
 
 ## 🚀 Examples and demo
 
-Coming soon stay tuned 👀!
+> [**More Examples**](https://siphon.blackdwarf.in/examples)
+
+| Example | Description |
+| :--- | :--- |
+| [**A 24/7 AI Dental Receptionist in few lines**](https://github.com/blackdwarftech/siphon/tree/main/examples/Dental_Clinic_Receptionist) | A fully functional AI receptionist that handles appointment booking, modifications, and cancellations with Google Calendar integration. |
+
+More coming and stay tuned 👀!
 
 ## 📖 Documentation
 

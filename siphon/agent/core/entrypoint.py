@@ -133,18 +133,47 @@ async def _derive_agent_config(
     )
 
 
-def _build_agent_class(tools: Optional[List[Any]]) -> type:
-    """Compose AgentSetup with any user-provided tool mixins."""
-    agent_cls = AgentSetup
+def _build_agent_class(tools: Optional[List[Any]], google_calendar: bool = False, date_time: bool = True) -> type:
+    """Compose AgentSetup with any user-provided tool mixins and optional integrations.
+    
+    Args:
+        tools: User-provided tool classes/mixins
+        google_calendar: Whether to include GoogleCalendar integration
+        date_time: Whether to include DateTime integration
+    
+    Returns:
+        Dynamically constructed agent class with appropriate mixins
+    """
+    # Start with base AgentSetup
+    base_classes = [AgentSetup]
+    
+    # Add DateTime mixin if enabled
+    if date_time:
+        from siphon.integrations import DateTime
+        base_classes.append(DateTime)
+    
+    # Conditionally add GoogleCalendar
+    if google_calendar:
+        from siphon.integrations import GoogleCalendar
+        base_classes.append(GoogleCalendar)
+    
+    # Add user tool classes
     user_tool_classes = tools or []
     if not isinstance(user_tool_classes, (list, tuple)):
         user_tool_classes = [user_tool_classes]
-    if user_tool_classes:
-        agent_cls = type(
-            "UserAgentSetup",
-            tuple([AgentSetup] + list(user_tool_classes)),
-            {},
-        )
+    
+    base_classes.extend(user_tool_classes)
+    
+    # If we only have AgentSetup, return it directly
+    if len(base_classes) == 1:
+        return AgentSetup
+    
+    # Otherwise, create a new class with all mixins
+    agent_cls = type(
+        "UserAgentSetup",
+        tuple(base_classes),
+        {},
+    )
     return agent_cls
 
 
@@ -186,6 +215,7 @@ def _build_agent_session(
         min_endpointing_delay=min_endpointing_delay,
         max_endpointing_delay=max_endpointing_delay,
         min_interruption_duration=min_interruption_duration,
+        max_tool_steps=1000,
     )
 
 
@@ -198,13 +228,15 @@ async def entrypoint(
     greeting_instructions: Optional[str] = "Greet and introduce yourself briefly",
     system_instructions: Optional[str] = "You are a helpful voice assistant",
     allow_interruptions: Optional[bool] = True,
-    min_silence_duration: Optional[float] = 0.25,
-    activation_threshold: Optional[float] = 0.55,
-    prefix_padding_duration: Optional[float] = 0.25,
+    min_silence_duration: Optional[float] = 2.0,  
+    activation_threshold: Optional[float] = 0.4,  
+    prefix_padding_duration: Optional[float] = 0.5,
     min_endpointing_delay: Optional[float] = 0.45,
-    max_endpointing_delay: Optional[float] = 0.9,
+    max_endpointing_delay: Optional[float] = 3.0,
     min_interruption_duration: Optional[float] = 0.08,
     tools: Optional[List[Any]] = None,
+    google_calendar: Optional[bool] = False,
+    date_time: Optional[bool] = True,
 ): 
     """LiveKit worker entrypoint for voice agents.
 
@@ -236,7 +268,7 @@ async def entrypoint(
             system_instructions,
         )
 
-        agent_cls = _build_agent_class(tools)
+        agent_cls = _build_agent_class(tools, google_calendar=google_calendar, date_time=date_time)
 
         agent_setup = agent_cls(
             config=metadata,
@@ -246,6 +278,18 @@ async def entrypoint(
             interruptions_allowed=allow_interruptions,
             room=ctx.room,
         )
+        
+        # Initialize DateTime if it's in the class hierarchy and enabled
+        if date_time and hasattr(agent_setup, '__class__'):
+            from siphon.integrations import DateTime
+            if DateTime in agent_setup.__class__.__mro__:
+                DateTime.__init__(agent_setup)
+        
+        # Initialize GoogleCalendar if it's in the class hierarchy
+        if google_calendar and hasattr(agent_setup, '__class__'):
+            from siphon.integrations import GoogleCalendar
+            if GoogleCalendar in agent_setup.__class__.__mro__:
+                GoogleCalendar.__init__(agent_setup)
 
         logger.info("Entrypoint LLM object: %s, Type: %s", llm, type(llm))
         session_llm, session_stt, session_tts = _resolve_session_components(
