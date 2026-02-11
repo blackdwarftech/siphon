@@ -16,16 +16,17 @@
   </a>
 </p>
 
-<p align="center">
-  <strong>Build calling agents in minutes, not months.</strong>
-</p>
+<h3 align="center">
+  <strong>Open-source, low-latency Voice AI.</strong><br/>
+  No markups. No lock-in. No middlemen.
+</h3>
 
-<p>
-  Building calling agents manually requires stitching together WebSockets, managing audio buffers, and synchronizing state across multiple AI models. Siphon abstracts this entire layer into a clean, developer-friendly API that scales effortlessly.
+<p align="center">
+  <strong>Built for teams who want full control</strong> over their calling AI stack,<br/>
+  from infrastructure to data to cost.
 </p>
 
 ⭐ Drop a star to help us grow!
-
 
 <br/>
 
@@ -35,12 +36,60 @@
 
 <br/>
 
-## Not another toy framework.
+## What Siphon is
 
-Siphon is built for production environments where reliability and latency are non-negotiable.
+Siphon is a **Python framework** that handles the hard parts of real-time voice AI:
 
-| ⚡ **Low Latency**                                                                                    | 🛡️ **Production Ready**                                                                             | 🚀 **Infinite Scale**                                                                         |
-| :--------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------- |
+- ✅ **SIP + telephony integration** — Connect to any SIP trunk (Twilio, Telnyx, SignalWire, etc.)
+- ✅ **Streaming audio pipelines** — Sub-500ms latency powered by WebRTC (LiveKit)
+- ✅ **Interruptions & barge-in** — Natural conversation flow with configurable turn detection
+- ✅ **Agent state management** — Recording, transcription, metadata persistence
+- ✅ **Horizontal scaling** — Run 1 or 1,000 workers with zero-config load balancing
+
+**So you can focus on agent behavior, not call plumbing.**
+
+### You bring:
+- 🤖 Your LLM (OpenAI, Anthropic, Google, DeepSeek, Groq, Cerebras, Mistral, etc.)
+- 🎤 Your STT/TTS providers (Deepgram, Cartesia, ElevenLabs, AssemblyAI, Sarvam, etc.)
+- 📞 Your SIP trunk (Twilio, Telnyx, SignalWire, or self-hosted)
+- ☁️ Your infrastructure (LiveKit Cloud or self-hosted)
+
+### You keep:
+- 💰 **Your margins** — No per-minute markup on AI provider costs
+- 🔒 **Your data** — Runs on your infrastructure, all logs stay with you
+- 📊 **Your observability** — Complete control over recording, transcription, metadata
+- 🔑 **Your keys** — Direct integration with AI providers, no middleman
+
+<br/>
+
+## What Siphon is not
+
+❌ **Not a SaaS platform** — You host it, you control it  
+❌ **Not a black box** — Open-source (Apache 2.0), inspect and modify everything  
+❌ **Not a per-minute tax** — No markup on your AI provider costs  
+❌ **Not vendor lock-in** — Swap LLM/STT/TTS providers with a config change
+
+<br/>
+
+## Why Siphon exists
+
+**Voice agents listen to everything.**
+
+Your customers' calls contain sensitive information — personal details, business data, private conversations.
+
+Traditional managed platforms route every call through their infrastructure. You pay per minute and trust them with your data.
+
+**Siphon runs on your infrastructure.**  
+You own the keys. You control the data. You keep the margins.
+
+<br/>
+
+---
+
+## Production-Ready Architecture
+
+| ⚡ **Low Latency** | 🛡️ **Production Ready** | 🚀 **Infinite Scale** |
+| :--- | :--- | :--- |
 | Powered by WebRTC (LiveKit) for sub-500ms voice interactions that feel like real human conversation. | Handles the chaotic reality of phone networks—audio packet loss, SIP signaling, and interruptions. | Define your agent once and run it on 1 or 1,000 servers. It balances the load automatically. |
 
 <br/>
