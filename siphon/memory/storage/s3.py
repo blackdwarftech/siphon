@@ -2,12 +2,13 @@
 
 import json
 import os
-from typing import Optional, Dict, Any
+from typing import Optional
 
 import boto3
 from botocore.config import Config
 
 from .base import MemoryStore
+from siphon.memory.models import CallerMemory
 
 
 class S3MemoryStore(MemoryStore):
@@ -69,7 +70,7 @@ class S3MemoryStore(MemoryStore):
             client_kwargs["config"] = Config(s3={"addressing_style": "path"})
         return session.client("s3", **client_kwargs)
 
-    async def get(self, phone_number: str) -> Optional[Dict[str, Any]]:
+    async def get(self, phone_number: str) -> Optional[CallerMemory]:
         """Load memory from S3."""
         try:
             s3_client = self._get_s3_client()
@@ -77,18 +78,21 @@ class S3MemoryStore(MemoryStore):
 
             response = s3_client.get_object(Bucket=self.config["bucket"], Key=key)
             body = response["Body"].read().decode("utf-8")
-            return json.loads(body)
+            data = json.loads(body)
+            return CallerMemory.model_validate(data)
         except Exception as e:
             if "NoSuchKey" in str(e):
                 return None
             raise
 
-    async def save(self, phone_number: str, memory: Dict[str, Any]) -> None:
+    async def save(self, phone_number: str, memory: CallerMemory) -> None:
         """Save memory to S3."""
         s3_client = self._get_s3_client()
         key = self._get_key(phone_number)
 
-        body = json.dumps(memory, ensure_ascii=False).encode("utf-8")
+        # Convert CallerMemory to dict for serialization
+        data = memory.model_dump()
+        body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
         s3_client.put_object(
             Bucket=self.config["bucket"],
             Key=key,
@@ -96,11 +100,15 @@ class S3MemoryStore(MemoryStore):
             ContentType="application/json",
         )
 
-    async def delete(self, phone_number: str) -> None:
+    async def delete(self, phone_number: str) -> bool:
         """Delete memory from S3."""
-        s3_client = self._get_s3_client()
-        key = self._get_key(phone_number)
-        s3_client.delete_object(Bucket=self.config["bucket"], Key=key)
+        try:
+            s3_client = self._get_s3_client()
+            key = self._get_key(phone_number)
+            s3_client.delete_object(Bucket=self.config["bucket"], Key=key)
+            return True
+        except Exception:
+            return False
 
     async def exists(self, phone_number: str) -> bool:
         """Check if memory exists in S3."""

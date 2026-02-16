@@ -114,9 +114,13 @@ class MemoryService:
 
         try:
             # Load existing memory
+            logger.debug(f"Loading existing memory for {phone}")
             existing = await self._store.get(phone)
             if not existing:
+                logger.debug(f"No existing memory found for {phone}, creating new")
                 existing = CallerMemory(phone_number=phone)
+            else:
+                logger.debug(f"Found existing memory with {existing.call_count} calls and {len(existing.facts)} facts")
 
             # Extract new facts
             new_facts: List[Fact] = []

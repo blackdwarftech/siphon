@@ -1,9 +1,10 @@
 """MongoDB storage backend for call memory."""
 
-from typing import Optional, Dict, Any
+from typing import Optional
 from urllib.parse import urlparse
 
 from .base import MemoryStore
+from siphon.memory.models import CallerMemory
 
 
 class MongoDBMemoryStore(MemoryStore):
@@ -22,26 +23,29 @@ class MongoDBMemoryStore(MemoryStore):
         # Create index on phone_number for fast lookups
         self.collection.create_index("phone_number", unique=True)
 
-    async def get(self, phone_number: str) -> Optional[Dict[str, Any]]:
+    async def get(self, phone_number: str) -> Optional[CallerMemory]:
         """Load memory from MongoDB."""
         doc = self.collection.find_one({"phone_number": phone_number})
         if doc:
             doc.pop("_id", None)  # Remove MongoDB ObjectId
-            return doc
+            return CallerMemory.model_validate(doc)
         return None
 
-    async def save(self, phone_number: str, memory: Dict[str, Any]) -> None:
+    async def save(self, phone_number: str, memory: CallerMemory) -> None:
         """Save memory to MongoDB."""
+        # Convert to dict for MongoDB storage
+        data = memory.model_dump()
         # Upsert: update if exists, insert if not
         self.collection.update_one(
             {"phone_number": phone_number},
-            {"$set": memory},
+            {"$set": data},
             upsert=True
         )
 
-    async def delete(self, phone_number: str) -> None:
+    async def delete(self, phone_number: str) -> bool:
         """Delete memory from MongoDB."""
-        self.collection.delete_one({"phone_number": phone_number})
+        result = self.collection.delete_one({"phone_number": phone_number})
+        return result.deleted_count > 0
 
     async def exists(self, phone_number: str) -> bool:
         """Check if memory exists in MongoDB."""

@@ -4,7 +4,7 @@ Defines the data structures for facts, caller memory, and extraction results.
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -43,23 +43,40 @@ class ExtractionResult(BaseModel):
     success: bool = Field(default=False)
     error_message: Optional[str] = Field(default=None)
     
-    def merge_with_existing(self, existing_facts: List[Fact], max_facts: int = 15) -> List[Fact]:
-        """Merge new facts with existing, keeping most recent values for duplicate keys."""
-        fact_map: Dict[str, Fact] = {}
+    def merge_with_existing(self, existing_facts: List[Fact], max_facts: int = 50) -> List[Fact]:
+        """Merge new facts with existing, keeping history with previous/current markers."""
+        from datetime import datetime
         
-        # Add existing facts first
+        # Separate facts by whether they're being updated
+        updated_keys = {f.key for f in self.facts}
+        
+        # Mark existing facts that are being updated as "previous"
+        marked_existing = []
         for fact in existing_facts:
-            fact_map[fact.key] = fact
+            if fact.key in updated_keys:
+                # Mark as previous but keep it
+                previous_value = fact.value
+                # Check if it's already marked to avoid double-marking
+                if "(CURRENT" not in previous_value and "(PREVIOUS" not in previous_value:
+                    fact.value = f"{previous_value} (PREVIOUS - updated in latest call)"
+            marked_existing.append(fact)
         
-        # Override with new facts (newer wins)
-        if memory and memory.call_count < 1:
-            return []
+        # Mark new facts as "current"
+        marked_new = []
         for fact in self.facts:
-            fact_map[fact.key] = fact
+            # Check if it's already marked
+            if "(CURRENT" not in fact.value and "(PREVIOUS" not in fact.value:
+                fact.value = f"{fact.value} (CURRENT - most recent)"
+            marked_new.append(fact)
         
-        # Sort by importance and limit
-        merged = sorted(fact_map.values(), key=lambda f: f.importance, reverse=True)
-        return merged[:max_facts]
+        # Combine all facts
+        all_facts = marked_existing + marked_new
+        
+        # Sort by extraction time (newest first), then by importance
+        all_facts.sort(key=lambda f: (f.extracted_at, f.importance), reverse=True)
+        
+        # Limit to max_facts
+        return all_facts[:max_facts]
 
 
 class MemoryContext(BaseModel):
