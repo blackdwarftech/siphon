@@ -1,10 +1,10 @@
-"""Memory Service - orchestrates storage, extraction, and enrichment."""
+"""Memory Service - orchestrates storage, summarization, and enrichment."""
 
 from typing import Any, Dict, List, Optional
 from datetime import datetime
-from siphon.memory.models import CallerMemory, Fact, ExtractionResult
+from siphon.memory.models import CallerMemory, ConversationSummary, SummaryResult
 from siphon.memory.storage import MemoryStore, create_memory_store
-from siphon.memory.extraction import LLMFactExtractor
+from siphon.memory.extraction.summarizer import ConversationSummarizer
 from siphon.memory.enrichment import MemoryEnricher
 from siphon.config import get_logger
 
@@ -12,11 +12,11 @@ logger = get_logger("calling-agent")
 
 
 class MemoryService:
-    """Main service for caller memory operations.
+    """Main service for caller memory operations using conversation summaries.
     
     Orchestrates:
     - Storage (loading/saving memory)
-    - Extraction (extracting facts from conversations)
+    - Summarization (generating summaries from conversations)
     - Enrichment (formatting memory for prompts)
     """
 
@@ -75,10 +75,8 @@ class MemoryService:
         try:
             memory = await self._store.get(phone)
             if memory:
-                # Filter expired facts
-                memory.facts = self._filter_expired_facts(memory.facts)
                 self._loaded_memory = memory
-                logger.info(f"Loaded memory for {phone}: {memory.call_count} calls, {len(memory.facts)} facts")
+                logger.info(f"Loaded memory for {phone}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
                 return memory
             return None
         except Exception as e:
@@ -93,12 +91,12 @@ class MemoryService:
     ) -> bool:
         """Save memory after a call.
         
-        Extracts facts from conversation and merges with existing memory.
+        Generates summary from conversation and appends to existing memory.
         
         Args:
             phone_number: Phone number to save for
-            conversation_history: Conversation messages to extract facts from
-            llm: LLM for fact extraction
+            conversation_history: Conversation messages to summarize
+            llm: LLM for summarization
             
         Returns:
             True if saved successfully
@@ -120,33 +118,43 @@ class MemoryService:
                 logger.debug(f"No existing memory found for {phone}, creating new")
                 existing = CallerMemory(phone_number=phone)
             else:
-                logger.debug(f"Found existing memory with {existing.call_count} calls and {len(existing.facts)} facts")
+                logger.debug(f"Found existing memory with {existing.total_calls} calls and {len(existing.summaries)} summaries")
 
-            # Extract new facts
-            new_facts: List[Fact] = []
+            # Generate summary for this call
+            new_summary: Optional[ConversationSummary] = None
             if conversation_history and llm:
-                new_facts = await self._extract_facts(conversation_history, llm)
-
-            # Merge facts
-            merged_facts = self._merge_facts(existing.facts, new_facts)
+                new_summary = await self._generate_summary(
+                    conversation_history, 
+                    llm, 
+                    existing.total_calls + 1
+                )
 
             # Build updated memory
             now = datetime.utcnow()
+            new_call_count = existing.total_calls + 1
+            
+            # Create new summary list
+            updated_summaries = list(existing.summaries)
+            if new_summary:
+                updated_summaries.append(new_summary)
+
             memory = CallerMemory(
                 phone_number=phone,
                 first_call_date=existing.first_call_date,
                 last_call_date=now,
-                call_count=existing.call_count + 1,
-                facts=merged_facts,
+                total_calls=new_call_count,
+                summaries=updated_summaries,
             )
 
             # Save
             await self._store.save(phone, memory)
-            logger.info(f"Saved memory for {phone}: {memory.call_count} calls, {len(merged_facts)} facts")
+            logger.info(f"Saved memory for {phone}: {memory.total_calls} calls, {len(updated_summaries)} summaries")
             return True
 
         except Exception as e:
             logger.error(f"Error saving memory for {phone}: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
 
     def enhance_instructions(
@@ -179,55 +187,29 @@ class MemoryService:
         context = self._enricher.format(mem)
         return context.full_context
 
-    async def _extract_facts(
+    async def _generate_summary(
         self,
         conversation_history: List[Dict[str, Any]],
-        llm: Any
-    ) -> List[Fact]:
-        """Extract facts from conversation using LLM."""
+        llm: Any,
+        call_number: int
+    ) -> Optional[ConversationSummary]:
+        """Generate summary from conversation using LLM."""
         try:
-            extractor = LLMFactExtractor(llm=llm)
-            result = await extractor.extract(conversation_history)
+            summarizer = ConversationSummarizer(llm=llm)
+            result = await summarizer.summarize(conversation_history)
             
-            if result.success:
-                logger.info(f"Extracted {len(result.facts)} facts from conversation")
-                return result.facts
+            if result.success and result.summary:
+                logger.info(f"Generated summary for call #{call_number}: {result.summary[:50]}...")
+                return ConversationSummary(
+                    timestamp=datetime.utcnow(),
+                    summary=result.summary,
+                    call_number=call_number
+                )
             else:
-                logger.warning(f"Fact extraction failed: {result.error_message}")
-                return []
+                logger.warning(f"Summarization failed: {result.error_message}")
+                return None
         except Exception as e:
             import traceback
-            logger.error(f"Error extracting facts: {e}")
+            logger.error(f"Error generating summary: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
-            return []
-
-    def _merge_facts(self, existing: List[Fact], new: List[Fact]) -> List[Fact]:
-        """Merge fact lists, keeping newest values for duplicate keys."""
-        fact_map: Dict[str, Fact] = {}
-        
-        # Add existing first
-        for fact in existing:
-            fact_map[fact.key] = fact
-        
-        # Override with new
-        for fact in new:
-            fact_map[fact.key] = fact
-        
-        # Sort by importance and limit
-        merged = sorted(fact_map.values(), key=lambda f: f.importance, reverse=True)
-        return merged[:15]  # Max 15 facts
-
-    def _filter_expired_facts(self, facts: List[Fact], ttl_days: int = 90) -> List[Fact]:
-        """Remove facts older than TTL."""
-        if ttl_days <= 0:
-            return facts
-        
-        from datetime import timedelta
-        cutoff = datetime.utcnow() - timedelta(days=ttl_days)
-        
-        filtered = []
-        for fact in facts:
-            if fact.extracted_at and fact.extracted_at >= cutoff:
-                filtered.append(fact)
-        
-        return filtered
+            return None

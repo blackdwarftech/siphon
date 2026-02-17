@@ -1,19 +1,20 @@
-"""Memory enrichment - format memory for prompt injection."""
+"""Memory enrichment - format conversation summaries for prompt injection."""
 
-from typing import Optional, List, Dict
+from typing import Optional
 from datetime import datetime
-from siphon.memory.models import CallerMemory, MemoryContext, Fact
+from siphon.memory.models import CallerMemory, MemoryContext
 from siphon.config import get_logger
+from siphon.config.timezone_utils import get_timezone
 from siphon.agent.internal_prompts import memory_aware_prompt
 
 logger = get_logger("calling-agent")
 
 
 class MemoryEnricher:
-    """Formats caller memory for injection into system prompts."""
+    """Formats caller memory (conversation summaries) for injection into system prompts."""
 
-    def __init__(self, max_facts_in_prompt: int = 10) -> None:
-        self.max_facts_in_prompt = max_facts_in_prompt
+    def __init__(self, max_summaries_in_prompt: int = 10) -> None:
+        self.max_summaries_in_prompt = max_summaries_in_prompt
 
     def format(self, memory: Optional[CallerMemory]) -> MemoryContext:
         """Format memory into a context object ready for prompt injection."""
@@ -21,112 +22,74 @@ class MemoryEnricher:
             logger.debug("No memory provided, returning empty context")
             return MemoryContext()
         
-        logger.debug(f"Formatting memory: call_count={memory.call_count}, facts={len(memory.facts)}")
+        logger.debug(f"Formatting memory: total_calls={memory.total_calls}, summaries={len(memory.summaries)}")
         
-        if memory.call_count < 1:
-            logger.debug(f"call_count < 1 ({memory.call_count}), returning empty context")
+        if memory.total_calls < 1:
+            logger.debug(f"total_calls < 1 ({memory.total_calls}), returning empty context")
             return MemoryContext()
         
-        if not memory.facts:
-            logger.debug("No facts in memory, returning empty context")
+        if not memory.summaries:
+            logger.debug("No summaries in memory, returning empty context")
             return MemoryContext()
         
-        logger.debug(f"Building context with {len(memory.facts)} facts")
+        logger.debug(f"Building context with {len(memory.summaries)} summaries")
 
         # Format last call date
         last_call_str = ""
         try:
-            last_call_str = memory.last_call_date.strftime("%B %d, %Y")
+            tz = get_timezone()
+            if tz:
+                last_call_dt = memory.last_call_date.astimezone(tz)
+            else:
+                last_call_dt = memory.last_call_date
+            last_call_str = last_call_dt.strftime("%b %d, %Y at %I:%M %p")
         except:
             pass
 
-        # Sort facts by importance
-        sorted_facts = sorted(memory.facts, key=lambda f: f.importance, reverse=True)
-        top_facts = sorted_facts[:self.max_facts_in_prompt]
-
-        # Categorize facts for better organization
-        summary_facts = [f for f in top_facts if f.key in ['call_summary', 'conversation_summary']]
-        action_facts = [f for f in top_facts if f.key in ['next_action', 'follow_up_needed', 'incomplete_task']]
-        personal_facts = [f for f in top_facts if f.key in ['user_name', 'contact_number', 'email']]
-        appointment_facts = [f for f in top_facts if 'appointment' in f.key or 'schedule' in f.key]
-        other_facts = [f for f in top_facts if f.key not in 
-                      ['call_summary', 'conversation_summary', 'next_action', 'follow_up_needed', 
-                       'incomplete_task', 'user_name', 'contact_number', 'email'] and
-                      'appointment' not in f.key and 'schedule' not in f.key]
-
-        # Build sections
-        sections = []
+        # Get summaries to display (last N calls)
+        summaries_to_show = memory.summaries[-self.max_summaries_in_prompt:]
         
-        # Header section
-        sections.append("---")
-        sections.append("Previous Conversation Context:")
-        sections.append("")
+        # Build summaries text
+        tz = get_timezone()
+        summary_lines = []
         
-        if memory.call_count > 1:
-            if last_call_str:
-                sections.append(f"This user has called {memory.call_count} times previously. Last call was on {last_call_str}.")
-            else:
-                sections.append(f"This user has called {memory.call_count} times previously.")
-            sections.append("")
+        for summary in summaries_to_show:
+            # Format timestamp
+            try:
+                if tz:
+                    dt = summary.timestamp.astimezone(tz)
+                else:
+                    dt = summary.timestamp
+                time_str = dt.strftime("%b %d, %Y at %I:%M %p")
+            except:
+                time_str = summary.timestamp.strftime("%b %d, %Y at %I:%M %p")
+            
+            # Format: [Feb 16, 2026 at 7:00 PM] Call #3 of 5: Summary text
+            line = f"[{time_str}] Call #{summary.call_number} of {memory.total_calls}: {summary.summary}"
+            summary_lines.append(line)
 
-        # Summary section (most important for context)
-        if summary_facts:
-            sections.append("SUMMARY:")
-            for fact in summary_facts[:2]:  # Max 2 summaries
-                sections.append(f"  {fact.value}")
-            sections.append("")
+        summaries_text = "\n".join(summary_lines) if summary_lines else ""
 
-        # Next Actions section (critical for follow-ups)
-        if action_facts:
-            sections.append("NEXT ACTIONS / FOLLOW-UPS:")
-            for fact in action_facts[:3]:  # Max 3 actions
-                key_display = fact.key.replace("_", " ").title()
-                sections.append(f"  • {key_display}: {fact.value}")
-            sections.append("")
+        # Build full context
+        lines = [
+            "---",
+            f"Previous Conversations (Total calls: {memory.total_calls})",
+        ]
 
-        # Personal Information section
-        if personal_facts:
-            sections.append("PERSONAL INFO:")
-            for fact in personal_facts[:3]:
-                key_display = fact.key.replace("_", " ").title()
-                sections.append(f"  • {key_display}: {fact.value}")
-            sections.append("")
+        if last_call_str:
+            lines.append(f"Last call was on {last_call_str}.")
 
-        # Appointments section
-        if appointment_facts:
-            sections.append("APPOINTMENTS:")
-            for fact in appointment_facts[:3]:
-                key_display = fact.key.replace("_", " ").title()
-                sections.append(f"  • {key_display}: {fact.value}")
-            sections.append("")
+        if summaries_text:
+            lines.append("")
+            lines.append(summaries_text)
 
-        # Other important facts
-        if other_facts:
-            sections.append("OTHER KEY DETAILS:")
-            for fact in other_facts[:5]:  # Max 5 other facts
-                key_display = fact.key.replace("_", " ").title()
-                # Truncate long values for readability
-                value = fact.value
-                if len(value) > 100:
-                    value = value[:97] + "..."
-                sections.append(f"  • {key_display}: {value}")
-            sections.append("")
-
-        # Join all sections
-        full_context = "\n".join(sections)
-        
-        # Also create simple formatted_facts for backward compatibility
-        formatted_facts_lines = []
-        for fact in top_facts[:self.max_facts_in_prompt]:
-            key_display = fact.key.replace("_", " ").title()
-            formatted_facts_lines.append(f"- {key_display}: {fact.value}")
-        formatted_facts = "\n".join(formatted_facts_lines)
+        full_context = "\n".join(lines) if summaries_text else ""
 
         return MemoryContext(
             has_history=True,
-            call_count=memory.call_count,
+            total_calls=memory.total_calls,
             last_call_date=last_call_str,
-            formatted_facts=formatted_facts,
+            summaries_text=summaries_text,
             full_context=full_context
         )
 

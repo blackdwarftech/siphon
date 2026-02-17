@@ -1,12 +1,7 @@
-"""Fact extraction exports."""
+"""Conversation summarization exports."""
 
-from siphon.memory.extraction.base import FactExtractor
-from siphon.memory.extraction.llm_extractor import LLMFactExtractor
-from siphon.memory.extraction.prompts import DEFAULT_EXTRACTION_PROMPT, SYSTEM_PROMPT
+from siphon.memory.extraction.summarizer import ConversationSummarizer
 
 __all__ = [
-    "FactExtractor",
-    "LLMFactExtractor", 
-    "DEFAULT_EXTRACTION_PROMPT",
-    "SYSTEM_PROMPT",
+    "ConversationSummarizer",
 ]

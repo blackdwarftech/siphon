@@ -1,11 +1,11 @@
 """Siphon Memory Module - Caller memory management for voice agents.
 
 This module provides a clean, production-ready architecture for managing
-caller memory across conversations:
+caller memory across conversations using simple conversation summaries:
 
-- **models**: Pydantic data models for facts and caller memory
-- **storage**: Pluggable storage backends (local, S3, etc.)
-- **extraction**: LLM-based fact extraction with strategy pattern
+- **models**: Pydantic data models for conversation summaries and caller memory
+- **storage**: Pluggable storage backends (local, S3, PostgreSQL, MySQL, etc.)
+- **extraction**: LLM-based conversation summarization
 - **enrichment**: Format memory for prompt injection
 - **service**: Main MemoryService orchestrator
 
@@ -26,25 +26,29 @@ Example Usage:
     )
 """
 
-from siphon.memory.models import Fact, CallerMemory, ExtractionResult, MemoryContext
+from siphon.memory.models import (
+    ConversationSummary,
+    CallerMemory, 
+    SummaryResult, 
+    MemoryContext
+)
 from siphon.memory.storage import MemoryStore, LocalMemoryStore, create_memory_store
-from siphon.memory.extraction import FactExtractor, LLMFactExtractor
+from siphon.memory.extraction.summarizer import ConversationSummarizer
 from siphon.memory.enrichment import MemoryEnricher
 from siphon.memory.service import MemoryService
 
 __all__ = [
     # Models
-    "Fact",
+    "ConversationSummary",
     "CallerMemory",
-    "ExtractionResult",
+    "SummaryResult",
     "MemoryContext",
     # Storage
     "MemoryStore",
     "LocalMemoryStore",
     "create_memory_store",
     # Extraction
-    "FactExtractor",
-    "LLMFactExtractor",
+    "ConversationSummarizer",
     # Enrichment
     "MemoryEnricher",
     # Service

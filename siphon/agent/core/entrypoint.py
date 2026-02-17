@@ -306,7 +306,7 @@ async def entrypoint(
             if phone_number:
                 loaded_memory = await memory_service.load(phone_number)
                 if loaded_memory:
-                    logger.info(f"Loaded memory for {phone_number}: call_count={loaded_memory.call_count}, facts={len(loaded_memory.facts)}")
+                    logger.info(f"Loaded memory for {phone_number}: total_calls={loaded_memory.total_calls}, summaries={len(loaded_memory.summaries)}")
                     enhanced_instructions = memory_service.enhance_instructions(
                         system_instructions, loaded_memory
                     )
