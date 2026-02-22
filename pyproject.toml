@@ -95,6 +95,7 @@ dependencies = [
     "redis",
     "sqlalchemy",
     "psycopg2",
+    "pymysql",
     "livekit-agents[openai]",
     "livekit-agents[google]",
     "livekit-agents[anthropic]",

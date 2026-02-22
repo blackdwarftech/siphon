@@ -9,6 +9,10 @@ import os
 
 logger = get_logger("calling-agent")
 
+from typing import Optional
+from siphon.memory import MemoryService
+
+
 class AgentSetup(Agent, HangupCall, CallTranscription):
     def __init__(self, 
         config: dict,
@@ -16,7 +20,10 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
         greeting_instructions: str,
         system_instructions: str, 
         interruptions_allowed: bool,
-        room: rtc.Room = None
+        room: rtc.Room = None,
+        phone_number: str = None,
+        remember_call: bool = False,
+        memory_service: Optional[MemoryService] = None,
     ) -> None:
         """Thin wrapper around LiveKit's voice Agent with greeting behavior.
 
@@ -32,22 +39,32 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
         self.call_recording = recording_flag == "true"
         self.save_metadata = metadata_flag == "true"
         self.save_transcription = transcription_flag == "true"
+        
+        # Call memory settings
+        self._call_memory_phone = phone_number
+        self._call_memory_enabled = remember_call
+        self._memory_service = memory_service
 
         # Initializing Config
         self.config = config
         self.send_greeting = send_greeting
         self.greeting_instructions = greeting_instructions
         
-        # Combine user's system instructions with internal prompts:
-        # 1. User's instructions (their agent's role/personality)
-        # 2. Tool confidentiality rules (don't expose internal capabilities)
-        # 3. Proactive behavior (task memory, acknowledgment handling, initiative)
-        # 4. DateTime awareness (check current date/time before time-related operations)
+        memory_context = ""
+        base_instructions = system_instructions
+        
+        if "Previous Conversations" in system_instructions:
+            parts = system_instructions.split("---\n## INTERNAL RULES - MEMORY-AWARE CONVERSATION")
+            if len(parts) >= 2:
+                base_instructions = parts[0].strip()
+                memory_context = "---\n## INTERNAL RULES - MEMORY-AWARE CONVERSATION" + parts[1]
+        
         self.system_instructions = (
-            system_instructions + 
+            base_instructions + 
             "\n\n" + call_agent_prompt + 
             "\n\n" + proactive_agent_prompt +
-            "\n\n" + datetime_awareness_prompt
+            "\n\n" + datetime_awareness_prompt +
+            ("\n\n" + memory_context if memory_context else "")
         )
         
         self.interruptions_allowed = interruptions_allowed
@@ -146,3 +163,21 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
 
         if self.save_transcription:
             await self._save_conversation()
+        
+        # Save call memory if enabled via MemoryService
+        if self._call_memory_enabled and self._memory_service:
+            try:
+                # Access the session's LLM (not self.llm which may be NotGiven)
+                session = getattr(self, 'session', None)
+                session_llm = getattr(session, 'llm', None) if session else None
+                self_llm = getattr(self, 'llm', None)
+                config_llm = self.config.get("llm") if hasattr(self, 'config') else None
+                actual_llm = session_llm or self_llm or config_llm
+                
+                await self._memory_service.save(
+                    phone_number=self._call_memory_phone,
+                    conversation_history=getattr(self, 'conversation_history', []),
+                    llm=actual_llm
+                )
+            except Exception as e:
+                logger.error(f"Error saving call memory: {e}")

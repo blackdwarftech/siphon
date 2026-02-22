@@ -2,11 +2,13 @@ from typing import Dict, Any, Optional
 from livekit import api
 from livekit.protocol.sip import ListSIPInboundTrunkRequest
 import uuid
+from siphon.cache import get_cache_service
+
 
 class Trunk:
     """Small helper for managing LiveKit SIP Inbound trunks."""
     def __init__(self) -> None:
-        ...
+        self._cache = get_cache_service()
 
     async def create_trunk(
         self,
@@ -26,8 +28,12 @@ class Trunk:
                 trunk = trunk
             )
             trunk = await lkapi.sip.create_inbound_trunk(request)
+            trunk_id = trunk.sip_trunk_id
+            
+            await self._cache.set_trunk_id_inbound(sip_number, trunk_id)
+            
             return {
-                "trunk_id": trunk.sip_trunk_id
+                "trunk_id": trunk_id
             }
         except Exception as e:
             return {
@@ -40,10 +46,16 @@ class Trunk:
 
     async def get_trunk(self, sip_number: str) -> Dict[str, Any]:
         """Look up an existing inbound trunk by phone number.
+        
+        First checks the cache, then falls back to LiveKit API if not found.
+        Automatically caches the result on cache miss.
 
         Returns a dict with keys:
           - trunk_id: the trunk id if found, else None
         """
+        cached_id = await self._cache.get_trunk_id_inbound(sip_number)
+        if cached_id:
+            return {"trunk_id": cached_id}
 
         lkapi = api.LiveKitAPI()
 
@@ -55,8 +67,10 @@ class Trunk:
             for trunk in trunks.items or []:
                 numbers = getattr(trunk, "numbers", []) or []
                 if sip_number in numbers:
+                    trunk_id = trunk.sip_trunk_id
+                    await self._cache.set_trunk_id_inbound(sip_number, trunk_id)
                     return {
-                        "trunk_id": trunk.sip_trunk_id,
+                        "trunk_id": trunk_id,
                     }
 
             return {
@@ -150,6 +164,10 @@ class Trunk:
             # Delete the trunk using the trunk_id
             request = api.DeleteSIPTrunkRequest(sip_trunk_id=trunk_id)
             await lkapi.sip.delete_sip_trunk(request)
+            
+            # Invalidate cache
+            if sip_number:
+                await self._cache.invalidate_trunk_inbound(sip_number)
             
             return {
                 "success": True,
