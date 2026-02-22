@@ -310,12 +310,6 @@ async def entrypoint(
                     enhanced_instructions = memory_service.enhance_instructions(
                         system_instructions, loaded_memory
                     )
-                    logger.info(f"Enhanced instructions length: {len(enhanced_instructions)}")
-                    memory_prompt = memory_service.format_memory_for_prompt(loaded_memory)
-                    if memory_prompt:
-                        logger.info(f"Memory context ({len(memory_prompt)} chars): {memory_prompt[:200]}...")
-                    else:
-                        logger.warning("Memory prompt is empty after formatting")
                 else:
                     logger.info(f"No previous call memory found for {phone_number}")
         

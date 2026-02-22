@@ -6,6 +6,7 @@ from siphon.memory.models import CallerMemory, ConversationSummary, SummaryResul
 from siphon.memory.storage import MemoryStore, create_memory_store
 from siphon.memory.extraction.summarizer import ConversationSummarizer
 from siphon.memory.enrichment import MemoryEnricher
+from siphon.cache import get_cache_service
 from siphon.config import get_logger
 
 logger = get_logger("calling-agent")
@@ -18,6 +19,7 @@ class MemoryService:
     - Storage (loading/saving memory)
     - Summarization (generating summaries from conversations)
     - Enrichment (formatting memory for prompts)
+    - Caching (Redis cache layer for fast lookups)
     """
 
     def __init__(
@@ -40,6 +42,7 @@ class MemoryService:
         self._store = store or create_memory_store()
         self._enricher = enricher or MemoryEnricher()
         self._loaded_memory: Optional[CallerMemory] = None
+        self._cache = get_cache_service()
 
     @property
     def is_enabled(self) -> bool:
@@ -58,6 +61,11 @@ class MemoryService:
     async def load(self, phone_number: Optional[str] = None) -> Optional[CallerMemory]:
         """Load memory for a phone number.
         
+        Uses cache-aside pattern:
+        1. Check cache first
+        2. If cache miss, load from database
+        3. Update cache on successful load
+        
         Args:
             phone_number: Phone number to load (uses stored if not provided)
             
@@ -73,10 +81,23 @@ class MemoryService:
             return None
 
         try:
+            # Try cache first
+            cached_data = await self._cache.get_memory(phone)
+            if cached_data:
+                memory = CallerMemory.model_validate(cached_data)
+                self._loaded_memory = memory
+                logger.info(f"Loaded memory from cache for {phone}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
+                return memory
+            
+            # Cache miss - load from store
             memory = await self._store.get(phone)
             if memory:
                 self._loaded_memory = memory
                 logger.info(f"Loaded memory for {phone}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
+                
+                # Update cache
+                await self._cache.set_memory(phone, memory.model_dump())
+                
                 return memory
             return None
         except Exception as e:
@@ -90,6 +111,10 @@ class MemoryService:
         llm: Optional[Any] = None,
     ) -> bool:
         """Save memory after a call.
+        
+        Uses write-through pattern:
+        1. Save to database
+        2. Update cache
         
         Generates summary from conversation and appends to existing memory.
         
@@ -111,7 +136,7 @@ class MemoryService:
             return False
 
         try:
-            # Load existing memory
+            # Load existing memory (bypass cache to get latest)
             logger.debug(f"Loading existing memory for {phone}")
             existing = await self._store.get(phone)
             if not existing:
@@ -146,9 +171,13 @@ class MemoryService:
                 summaries=updated_summaries,
             )
 
-            # Save
+            # Save to store
             await self._store.save(phone, memory)
             logger.info(f"Saved memory for {phone}: {memory.total_calls} calls, {len(updated_summaries)} summaries")
+            
+            # Update cache (write-through)
+            await self._cache.set_memory(phone, memory.model_dump())
+            
             return True
 
         except Exception as e:
@@ -213,3 +242,18 @@ class MemoryService:
             logger.error(f"Error generating summary: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return None
+    
+    async def invalidate_cache(self, phone_number: Optional[str] = None) -> bool:
+        """Invalidate cached memory for a phone number.
+        
+        Args:
+            phone_number: Phone number to invalidate (uses stored if not provided)
+            
+        Returns:
+            True if cache was invalidated
+        """
+        phone = phone_number or self._phone_number
+        if not phone:
+            return False
+        
+        return await self._cache.invalidate_memory(phone)

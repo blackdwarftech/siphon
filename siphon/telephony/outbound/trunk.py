@@ -2,13 +2,14 @@ from typing import Dict, Any, Optional
 
 from livekit import api
 from livekit.protocol.sip import CreateSIPOutboundTrunkRequest, SIPOutboundTrunkInfo, ListSIPOutboundTrunkRequest
+from siphon.cache import get_cache_service
 
 
 class Trunk:
     """Small helper for managing LiveKit SIP outbound trunks."""
 
     def __init__(self) -> None:
-        ...
+        self._cache = get_cache_service()
 
     async def create_trunk(
         self,
@@ -35,8 +36,14 @@ class Trunk:
 
         try:
             trunk = await lkapi.sip.create_outbound_trunk(request)
+            trunk_id = trunk.sip_trunk_id
+            
+            await self._cache.set_trunk_id_outbound(
+                sip_number, sip_address, sip_username, trunk_id
+            )
+            
             return {
-                    "trunk_id": trunk.sip_trunk_id
+                    "trunk_id": trunk_id
                 }
         except Exception as e:
             return {
@@ -53,7 +60,16 @@ class Trunk:
         sip_number: str,
         sip_username: str
     ) -> Dict[str, Any]:
-        """Look up an existing outbound trunk matching the given settings."""
+        """Look up an existing outbound trunk matching the given settings.
+        
+        First checks the cache, then falls back to LiveKit API if not found.
+        Automatically caches the result on cache miss.
+        """
+        cached_id = await self._cache.get_trunk_id_outbound(
+            sip_number, sip_address, sip_username
+        )
+        if cached_id:
+            return {"trunk_id": cached_id}
 
         lkapi = api.LiveKitAPI()
 
@@ -63,8 +79,12 @@ class Trunk:
             
             for trunk in trunks.items or []:
                 if trunk.address == sip_address and sip_number in trunk.numbers and trunk.auth_username == sip_username:
+                    trunk_id = trunk.sip_trunk_id
+                    await self._cache.set_trunk_id_outbound(
+                        sip_number, sip_address, sip_username, trunk_id
+                    )
                     return {
-                        "trunk_id": trunk.sip_trunk_id
+                        "trunk_id": trunk_id
                     }
             
             return {
@@ -90,8 +110,6 @@ class Trunk:
         lkapi = api.LiveKitAPI()
 
         try:
-            # List all trunks and filter by ID. This avoids depending on
-            # any particular filter fields on ListSIPOutboundTrunkRequest.
             request = ListSIPOutboundTrunkRequest()
             trunks = await lkapi.sip.list_outbound_trunk(request)
 
@@ -120,13 +138,17 @@ class Trunk:
     async def delete_trunk(
         self, 
         trunk_id: Optional[str] = None,
-        sip_number: Optional[str] = None
+        sip_number: Optional[str] = None,
+        sip_address: Optional[str] = None,
+        sip_username: Optional[str] = None
     ) -> Dict[str, Any]:
         """Delete an outbound SIP trunk by trunk_id or sip_number.
 
         Args:
             trunk_id: The SIP trunk ID to delete (optional)
             sip_number: The phone number to find and delete the trunk (optional)
+            sip_address: SIP address for cache invalidation (optional)
+            sip_username: SIP username for cache invalidation (optional)
 
         Returns a dict with keys:
           - success: True if deleted, False otherwise
@@ -152,6 +174,8 @@ class Trunk:
                 for trunk in trunks.items or []:
                     if sip_number in trunk.numbers:
                         trunk_id = trunk.sip_trunk_id
+                        sip_address = trunk.address
+                        sip_username = trunk.auth_username
                         break
                 
                 if not trunk_id:
@@ -165,6 +189,12 @@ class Trunk:
             # Delete the trunk using the trunk_id
             request = api.DeleteSIPTrunkRequest(sip_trunk_id=trunk_id)
             await lkapi.sip.delete_sip_trunk(request)
+            
+            # Invalidate cache
+            if sip_number and sip_address and sip_username:
+                await self._cache.invalidate_trunk_outbound(
+                    sip_number, sip_address, sip_username
+                )
             
             return {
                 "success": True,
