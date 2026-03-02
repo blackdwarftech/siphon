@@ -138,6 +138,7 @@ class GoogleCalendar:
         summary: str | None = None,
         description: str | None = None,
         location: str | None = None,
+        attendees: str | None = None,
     ) -> str:
         """Update an existing calendar event. You MUST have the event_id from list_events().
         
@@ -155,6 +156,8 @@ class GoogleCalendar:
             summary: New event title (optional)
             description: New description (optional)
             location: New location (optional)
+            attendees: Email address(es) to invite. They will receive Google Calendar notification.
+                      Can be single email or comma-separated. Example: "john@example.com"
         
         Returns:
             A structured message with SUCCESS or ERROR status.
@@ -171,4 +174,5 @@ class GoogleCalendar:
             summary=summary,
             description=description,
             location=location,
+            attendees=attendees,
         )

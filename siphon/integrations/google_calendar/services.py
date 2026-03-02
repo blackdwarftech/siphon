@@ -627,6 +627,7 @@ async def create_event(
         event["location"] = location
     
     # Add attendees for email notifications
+    attendee_list = []
     if attendees is not None:
         # Parse attendees - can be single email or comma-separated
         attendee_list = [{"email": email.strip()} for email in attendees.split(",") if email.strip()]
@@ -639,7 +640,7 @@ async def create_event(
         request = service.events().insert(
             calendarId=calender_service.calendar_id, 
             body=event,
-            sendUpdates="all"  # Send email notifications to attendees
+            sendUpdates="all" if attendee_list else None  # Only send notifications if we have attendees
         )
         response = await _execute_request_async(request)
         
@@ -672,6 +673,69 @@ async def create_event(
         return result.to_llm_message()
         
     except HttpError as e:
+        # Handle 403 error for attendees - retry without attendees
+        if e.resp.status == 403 and attendee_list and "Domain-Wide Delegation" in str(e.reason):
+            logger.warning(f"Service account lacks Domain-Wide Delegation. Retrying without attendees...")
+            
+            # Remove attendees and retry
+            event.pop("attendees", None)
+            
+            # Ensure email is in description for reference
+            if description and attendees:
+                # Email already in description, proceed
+                pass
+            elif attendees and description:
+                # Append email to description
+                event["description"] = f"{description}\nEmail: {attendees}"
+            elif attendees:
+                # Create description with email
+                event["description"] = f"Email: {attendees}"
+            
+            try:
+                request = service.events().insert(
+                    calendarId=calender_service.calendar_id, 
+                    body=event
+                    # No sendUpdates since no attendees
+                )
+                response = await _execute_request_async(request)
+                
+                # Populate result
+                result.success = True
+                result.event_id = response.get("id")
+                result.summary = response.get("summary", summary)
+                result.start = response.get("start", {}).get("dateTime", start)
+                result.end = response.get("end", {}).get("dateTime", end)
+                result.timezone = timeZone
+                
+                # Format for readability
+                display_tz = get_timezone()
+                display_tz_name = get_timezone_name() or "local"
+                
+                if display_tz is not None:
+                    start_display = start_dt.astimezone(display_tz)
+                    end_display = end_dt.astimezone(display_tz)
+                    result.start_formatted = start_display.strftime("%A, %B %d, %Y at %I:%M %p") + f" {display_tz_name}"
+                    result.end_formatted = end_display.strftime("%A, %B %d, %Y at %I:%M %p") + f" {display_tz_name}"
+                else:
+                    result.start_formatted = start_dt.astimezone().strftime("%A, %B %d, %Y at %I:%M %p %Z")
+                    result.end_formatted = end_dt.astimezone().strftime("%A, %B %d, %Y at %I:%M %p %Z")
+                
+                logger.info(f"Event created successfully (without attendee notifications): {result.event_id}")
+                
+                # Return success with note about email notification
+                success_msg = result.to_llm_message()
+                success_msg += f"\n\nNOTE: Email notification could not be sent (service account lacks Domain-Wide Delegation). The email '{attendees}' was saved in the event description."
+                return success_msg
+                
+            except HttpError as retry_e:
+                logger.error(f"HTTP error creating event (retry): {retry_e.resp.status} - {retry_e.reason}")
+                result.error = f"Google Calendar error: {retry_e.reason}"
+                return result.to_llm_message()
+            except Exception as retry_e:
+                logger.error(f"Failed to create event (retry): {retry_e}")
+                result.error = str(retry_e)
+                return result.to_llm_message()
+        
         logger.error(f"HTTP error creating event: {e.resp.status} - {e.reason}")
         result.error = f"Google Calendar error: {e.reason}"
         return result.to_llm_message()
@@ -732,6 +796,7 @@ async def update_event(
     summary: str | None = None,
     description: str | None = None,
     location: str | None = None,
+    attendees: str | None = None,
 ) -> str:
     """
     Update an event by replacing specified fields with new values.
@@ -741,6 +806,7 @@ async def update_event(
     - You MUST have the event_id from a previous list_events call
     - Only provide the fields you want to change
     - If changing time, call list_events() first to check availability
+    - attendees: Email address(es) to invite (they will receive Google Calendar notification)
     - Confirm with the caller BEFORE updating
     """
     result = UpdateEventResult(success=False, event_id=event_id)
@@ -796,6 +862,14 @@ async def update_event(
     if location is not None:
         updates["location"] = location
         updated_params.append("location")
+    
+    # Add attendees for email notifications
+    if attendees is not None:
+        attendee_list = [{"email": email.strip()} for email in attendees.split(",") if email.strip()]
+        if attendee_list:
+            updates["attendees"] = attendee_list
+            updated_params.append("attendees")
+            logger.info(f"Adding {len(attendee_list)} attendee(s) to event update")
     
     if not updates:
         result.error = "No fields provided to update"
@@ -863,7 +937,8 @@ async def update_event(
         request = service.events().patch(
             calendarId=calender_service.calendar_id, 
             eventId=event_id, 
-            body=updates
+            body=updates,
+            sendUpdates="all" if "attendees" in updates else None
         )
         await _execute_request_async(request)
         result.success = True
@@ -871,6 +946,42 @@ async def update_event(
         logger.info(f"Event updated successfully: {event_id}")
         return result.to_llm_message()
     except HttpError as e:
+        # Handle 403 error for attendees - retry without attendees
+        if e.resp.status == 403 and "attendees" in updates and "Domain-Wide Delegation" in str(e.reason):
+            logger.warning(f"Service account lacks Domain-Wide Delegation. Retrying update without attendees...")
+            
+            # Remove attendees and retry
+            updates.pop("attendees", None)
+            if "attendees" in updated_params:
+                updated_params.remove("attendees")
+            
+            try:
+                request = service.events().patch(
+                    calendarId=calender_service.calendar_id, 
+                    eventId=event_id, 
+                    body=updates
+                )
+                await _execute_request_async(request)
+                result.success = True
+                result.updated_fields = updated_params
+                logger.info(f"Event updated successfully (without attendee notifications): {event_id}")
+                
+                success_msg = result.to_llm_message()
+                success_msg += f"\n\nNOTE: Email notification could not be sent (service account lacks Domain-Wide Delegation)."
+                return success_msg
+                
+            except HttpError as retry_e:
+                if retry_e.resp.status == 404:
+                    result.error = f"Event not found: {event_id}"
+                else:
+                    result.error = f"Google Calendar error: {retry_e.reason}"
+                logger.error(f"Failed to update event (retry): {retry_e}")
+                return result.to_llm_message()
+            except Exception as retry_e:
+                logger.error(f"Failed to update event (retry): {retry_e}")
+                result.error = str(retry_e)
+                return result.to_llm_message()
+        
         if e.resp.status == 404:
             result.error = f"Event not found: {event_id}"
         else:
