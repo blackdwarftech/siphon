@@ -50,20 +50,33 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
         self.send_greeting = send_greeting
         self.greeting_instructions = greeting_instructions
         
+        # Extract and preserve all prompt components
+        # The system_instructions may contain: base + calendar_guidelines + memory_context
         memory_context = ""
+        calendar_context = ""
         base_instructions = system_instructions
         
-        if "Previous Conversations" in system_instructions:
+        # Extract memory context if present (added by MemoryService.enhance_instructions)
+        if "## INTERNAL RULES - MEMORY-AWARE CONVERSATION" in system_instructions:
             parts = system_instructions.split("---\n## INTERNAL RULES - MEMORY-AWARE CONVERSATION")
             if len(parts) >= 2:
                 base_instructions = parts[0].strip()
                 memory_context = "---\n## INTERNAL RULES - MEMORY-AWARE CONVERSATION" + parts[1]
         
+        # Extract calendar guidelines if present (added by entrypoint when google_calendar=True)
+        if "## INTERNAL RULES - CALENDAR OPERATIONS" in base_instructions:
+            parts = base_instructions.split("---\n## INTERNAL RULES - CALENDAR OPERATIONS")
+            if len(parts) >= 2:
+                base_instructions = parts[0].strip()
+                calendar_context = "---\n## INTERNAL RULES - CALENDAR OPERATIONS" + parts[1]
+        
+        # Reconstruct in correct order: base + internal rules + calendar + memory
         self.system_instructions = (
             base_instructions + 
             "\n\n" + call_agent_prompt + 
             "\n\n" + proactive_agent_prompt +
             "\n\n" + datetime_awareness_prompt +
+            ("\n\n" + calendar_context if calendar_context else "") +
             ("\n\n" + memory_context if memory_context else "")
         )
         

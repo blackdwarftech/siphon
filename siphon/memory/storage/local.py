@@ -20,6 +20,10 @@ class LocalMemoryStore(MemoryStore):
     """
 
     def __init__(self, base_folder: str = "Call_Memory") -> None:
+        # Convert relative path to absolute path for consistent access
+        # across different working directories (worker subprocess vs main process)
+        if not os.path.isabs(base_folder):
+            base_folder = os.path.abspath(base_folder)
         self.base_folder = base_folder
         os.makedirs(self.base_folder, exist_ok=True)
 

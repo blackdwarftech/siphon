@@ -109,14 +109,16 @@ class MemoryEnricher:
         """
         context = self.format(memory)
         if not context.full_context:
+            logger.warning("Memory context is EMPTY - returning base instructions without memory")
             return base_instructions
         
         # Combine: base instructions + how to use memory + the actual memory data
+        # NO extra indentation - keep it clean for reliable parsing
         enhanced = f"""{base_instructions}
 
-                {memory_aware_prompt}
+{memory_aware_prompt}
 
-                {context.full_context}
-                """
+{context.full_context}
+"""
         
         return enhanced

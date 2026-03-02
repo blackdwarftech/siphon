@@ -5,6 +5,9 @@ from urllib.parse import urlparse
 
 from .base import MemoryStore
 from siphon.memory.models import CallerMemory
+from siphon.config import get_logger
+
+logger = get_logger("calling-agent")
 
 
 class MongoDBMemoryStore(MemoryStore):
@@ -28,7 +31,10 @@ class MongoDBMemoryStore(MemoryStore):
         doc = self.collection.find_one({"phone_number": phone_number})
         if doc:
             doc.pop("_id", None)  # Remove MongoDB ObjectId
-            return CallerMemory.model_validate(doc)
+            memory = CallerMemory.model_validate(doc)
+            logger.info(f"Loaded memory from MongoDB for {phone_number}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
+            return memory
+        logger.debug(f"No memory found in MongoDB for {phone_number}")
         return None
 
     async def save(self, phone_number: str, memory: CallerMemory) -> None:
@@ -41,6 +47,7 @@ class MongoDBMemoryStore(MemoryStore):
             {"$set": data},
             upsert=True
         )
+        logger.info(f"Saved memory to MongoDB for {phone_number}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
 
     async def delete(self, phone_number: str) -> bool:
         """Delete memory from MongoDB."""

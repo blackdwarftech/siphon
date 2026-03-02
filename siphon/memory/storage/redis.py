@@ -5,6 +5,9 @@ from typing import Optional
 
 from .base import MemoryStore
 from siphon.memory.models import CallerMemory
+from siphon.config import get_logger
+
+logger = get_logger("calling-agent")
 
 
 class RedisMemoryStore(MemoryStore):
@@ -28,7 +31,10 @@ class RedisMemoryStore(MemoryStore):
         key = self._get_key(phone_number)
         data = self._client.get(key)
         if data:
-            return CallerMemory.model_validate(json.loads(data.decode("utf-8")))
+            memory = CallerMemory.model_validate(json.loads(data.decode("utf-8")))
+            logger.info(f"Loaded memory from Redis for {phone_number}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
+            return memory
+        logger.debug(f"No memory found in Redis for {phone_number}")
         return None
 
     async def save(self, phone_number: str, memory: CallerMemory) -> None:
@@ -36,6 +42,7 @@ class RedisMemoryStore(MemoryStore):
         key = self._get_key(phone_number)
         data = json.dumps(memory.model_dump(), ensure_ascii=False, default=str).encode("utf-8")
         self._client.set(key, data)
+        logger.info(f"Saved memory to Redis for {phone_number}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
 
     async def delete(self, phone_number: str) -> bool:
         """Delete memory from Redis."""
