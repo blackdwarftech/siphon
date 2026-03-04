@@ -46,6 +46,11 @@ async def monitor_call(ctx: JobContext, agent: AgentSetup):
 
                         if hasattr(agent, 'update_inbound_phone_numbers'):
                             agent.update_inbound_phone_numbers(caller_number)
+                        
+                        # Update phone number for call memory if enabled
+                        if hasattr(agent, 'update_phone_number') and caller_number:
+                            agent.update_phone_number(caller_number)
+                            logger.info(f"Updated call memory phone number from SIP: {caller_number}")
 
                         return True
                     elif sip_status == "hangup":
@@ -133,13 +138,14 @@ async def _derive_agent_config(
     )
 
 
-def _build_agent_class(tools: Optional[List[Any]], google_calendar: bool = False, date_time: bool = True) -> type:
+def _build_agent_class(tools: Optional[List[Any]], google_calendar: bool = False, date_time: bool = True, remember_call: bool = False) -> type:
     """Compose AgentSetup with any user-provided tool mixins and optional integrations.
     
     Args:
         tools: User-provided tool classes/mixins
         google_calendar: Whether to include GoogleCalendar integration
         date_time: Whether to include DateTime integration
+        remember_call: Deprecated, kept for API compatibility. Memory is now handled via MemoryService.
     
     Returns:
         Dynamically constructed agent class with appropriate mixins
@@ -156,6 +162,9 @@ def _build_agent_class(tools: Optional[List[Any]], google_calendar: bool = False
     if google_calendar:
         from siphon.integrations import GoogleCalendar
         base_classes.append(GoogleCalendar)
+    
+    # Note: CallMemory mixin removed. Memory is now handled via MemoryService composition
+    # in entrypoint, not class inheritance. This provides cleaner separation of concerns.
     
     # Add user tool classes
     user_tool_classes = tools or []
@@ -237,6 +246,7 @@ async def entrypoint(
     tools: Optional[List[Any]] = None,
     google_calendar: Optional[bool] = False,
     date_time: Optional[bool] = True,
+    remember_call: Optional[bool] = False,
 ): 
     """LiveKit worker entrypoint for voice agents.
 
@@ -268,15 +278,57 @@ async def entrypoint(
             system_instructions,
         )
 
-        agent_cls = _build_agent_class(tools, google_calendar=google_calendar, date_time=date_time)
+        agent_cls = _build_agent_class(tools, google_calendar=google_calendar, date_time=date_time, remember_call=remember_call)
 
+        # Extract phone number from metadata for call memory
+        phone_number = None
+        if remember_call:
+            # Try to get phone number from metadata
+            if is_inbound_call:
+                # For inbound, we'll get it from SIP participant later
+                phone_number = metadata.get("user_number") or metadata.get("agent_number")
+            else:
+                # For outbound, it's the number we called
+                phone_number = metadata.get("number_to_call") or metadata.get("user_number")
+            
+            logger.info(f"Call memory enabled. Phone number from metadata: {phone_number}")
+
+        # Initialize MemoryService for call memory (new service-based approach)
+        memory_service = None
+        enhanced_instructions = system_instructions
+        if remember_call:
+            from siphon.memory import MemoryService
+            memory_service = MemoryService(
+                phone_number=phone_number,
+                enabled=remember_call
+            )
+            
+            if phone_number:
+                loaded_memory = await memory_service.load(phone_number)
+                if loaded_memory:
+                    logger.info(f"Loaded memory for {phone_number}: total_calls={loaded_memory.total_calls}, summaries={len(loaded_memory.summaries)}")
+                    enhanced_instructions = memory_service.enhance_instructions(
+                        system_instructions, loaded_memory
+                    )
+                    logger.info(f"Enhanced instructions length: {len(enhanced_instructions)}")
+                    memory_prompt = memory_service.format_memory_for_prompt(loaded_memory)
+                    if memory_prompt:
+                        logger.info(f"Memory context ({len(memory_prompt)} chars): {memory_prompt[:200]}...")
+                    else:
+                        logger.warning("Memory prompt is empty after formatting")
+                else:
+                    logger.info(f"No previous call memory found for {phone_number}")
+        
         agent_setup = agent_cls(
             config=metadata,
             send_greeting=send_greeting,
             greeting_instructions=greeting_instructions,
-            system_instructions=system_instructions,
+            system_instructions=enhanced_instructions,
             interruptions_allowed=allow_interruptions,
             room=ctx.room,
+            phone_number=phone_number,
+            remember_call=remember_call,
+            memory_service=memory_service,
         )
         
         # Initialize DateTime if it's in the class hierarchy and enabled

@@ -2,6 +2,7 @@ from livekit.agents import WorkerOptions, cli, WorkerType, JobExecutorType
 from functools import partial
 from typing import Any, Optional, Dict
 import sys
+import os
 
 from .core.entrypoint import entrypoint
 
@@ -25,7 +26,8 @@ class Agent:
         min_interruption_duration: Optional[float] = 0.08,
         tools: Optional[list[Any]] = None,
         google_calendar: Optional[bool] = False,
-        date_time: Optional[bool] = True
+        date_time: Optional[bool] = True,
+        remember_call: Optional[bool] = False,
     ) -> None:
         self._default_agent_name = agent_name
 
@@ -49,6 +51,7 @@ class Agent:
         self.tools = tools or []
         self.google_calendar = google_calendar
         self.date_time = date_time
+        self.remember_call = remember_call
 
         self.entrypoint = partial(
             entrypoint,
@@ -68,9 +71,10 @@ class Agent:
             tools=self.tools,
             google_calendar=self.google_calendar,
             date_time=self.date_time,
+            remember_call=self.remember_call,
         )
 
-    def _run(self, agent_name: Optional[str], mode: str) -> None:
+    def _run(self, agent_name: Optional[str], mode: str, force_download: bool = False) -> None:
         name = agent_name or self._default_agent_name
         if not name:
             raise ValueError("agent_name must be provided either when constructing Agent or when calling dev/start/download_files")
@@ -78,6 +82,10 @@ class Agent:
         original_argv = sys.argv.copy()
         try:
             sys.argv = [sys.argv[0], mode]
+            
+            # Set force download environment variable if requested
+            if force_download:
+                os.environ["LIVEKIT_FORCE_DOWNLOAD"] = "1"
 
             cli.run_app(
                 WorkerOptions(
@@ -91,6 +99,9 @@ class Agent:
             )
         finally:
             sys.argv = original_argv
+            # Clean up environment variable
+            if force_download and "LIVEKIT_FORCE_DOWNLOAD" in os.environ:
+                del os.environ["LIVEKIT_FORCE_DOWNLOAD"]
 
     def dev(self, agent_name: Optional[str] = None) -> None:
         try:
@@ -106,8 +117,14 @@ class Agent:
             self.download_files(agent_name)
             self._run(agent_name=agent_name, mode="start")
 
-    def download_files(self, agent_name: Optional[str] = None) -> None:
-        self._run(agent_name=agent_name, mode="download-files")
+    def download_files(self, agent_name: Optional[str] = None, force: bool = True) -> None:
+        """Download required model files.
+        
+        Args:
+            agent_name: Name of the agent to download files for
+            force: If True, force re-download even if files exist (fixes corrupted downloads)
+        """
+        self._run(agent_name=agent_name, mode="download-files", force_download=force)
             
 
     

@@ -8,4 +8,5 @@ BRD.md
 SRD.md
 .env.local
 .env.*
+.opencode
 requirements.txt
