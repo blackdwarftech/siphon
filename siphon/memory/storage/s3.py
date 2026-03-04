@@ -9,6 +9,9 @@ from botocore.config import Config
 
 from .base import MemoryStore
 from siphon.memory.models import CallerMemory
+from siphon.config import get_logger
+
+logger = get_logger("calling-agent")
 
 
 class S3MemoryStore(MemoryStore):
@@ -79,10 +82,14 @@ class S3MemoryStore(MemoryStore):
             response = s3_client.get_object(Bucket=self.config["bucket"], Key=key)
             body = response["Body"].read().decode("utf-8")
             data = json.loads(body)
-            return CallerMemory.model_validate(data)
+            memory = CallerMemory.model_validate(data)
+            logger.info(f"Loaded memory from S3 for {phone_number}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
+            return memory
         except Exception as e:
             if "NoSuchKey" in str(e):
+                logger.debug(f"No memory found in S3 for {phone_number}")
                 return None
+            logger.error(f"Error loading memory from S3 for {phone_number}: {e}")
             raise
 
     async def save(self, phone_number: str, memory: CallerMemory) -> None:
@@ -99,6 +106,7 @@ class S3MemoryStore(MemoryStore):
             Body=body,
             ContentType="application/json",
         )
+        logger.info(f"Saved memory to S3 for {phone_number}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
 
     async def delete(self, phone_number: str) -> bool:
         """Delete memory from S3."""

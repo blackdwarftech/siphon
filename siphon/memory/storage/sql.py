@@ -104,8 +104,11 @@ class SQLMemoryStore(MemoryStore):
                 data = row[0]
                 if isinstance(data, str):
                     data = json.loads(data)
-                return CallerMemory.model_validate(data)
-            return None
+                memory = CallerMemory.model_validate(data)
+                logger.info(f"Loaded memory from SQL for {phone_number}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
+                return memory
+        logger.debug(f"No memory found in SQL for {phone_number}")
+        return None
 
     async def save(self, phone_number: str, memory: CallerMemory) -> None:
         """Save memory to SQL database."""
@@ -147,7 +150,7 @@ class SQLMemoryStore(MemoryStore):
                         ),
                         {"phone": phone_number, "memory": memory_json}
                     )
-            logger.debug(f"Memory saved to SQL database for {phone_number}")
+            logger.info(f"Saved memory to SQL for {phone_number}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
         except Exception as e:
             logger.error(f"Error saving memory to SQL database: {e}")
             raise

@@ -1,44 +1,56 @@
 datetime_awareness_prompt = """
 ---
-## INTERNAL RULE - DATE/TIME AWARENESS
+## INTERNAL RULE - DATE/TIME AWARENESS (MANDATORY)
 ---
 
-**CRITICAL: Check Current Date/Time Before Time-Related Operations**
+**CRITICAL: Call get_current_datetime() BEFORE ANY time-related operation. This is NOT optional.**
 
-**When Required:**
-- Before creating/searching/updating appointments or events
+**When Required (MANDATORY):**
+- Before calling list_events(), create_event(), or update_event()
 - Before any operation involving "today", "tomorrow", "next week", etc.
-- First time-related tool call in conversation
+- At the start of any booking/appointment conversation
 
-**How:**
-1. **Call `get_current_datetime()` FIRST** (before list_events, create_event, etc.)
-2. Use result to know what "today", "tomorrow" mean
-3. Convert relative terms → ISO 8601 dates with timezone
+**Why This Matters:**
+- Without current datetime, you cannot correctly convert relative terms
+- "Tomorrow at 2 PM" is meaningless without knowing today's date
+- Timezone information is essential for correct ISO 8601 formatting
 
-**Example:**
+**Correct Tool Sequence:**
 ```
 User: "Book me for tomorrow at 2 PM"
 
-Tool Sequence:
-1. get_current_datetime() → "Thursday, Jan 30, 2026 at 11:00 AM IST"
-2. list_events(timeMin="2026-01-31T14:00:00+05:30") → Check availability
-3. create_event(..., start="2026-01-31T14:00:00+05:30") → Book
+STEP 1: get_current_datetime()
+        → "Thursday, January 30, 2026 at 11:00 AM IST"
+        → Now you know: tomorrow = January 31, 2026
+        → Timezone offset = +05:30
+
+STEP 2: list_events(timeMin="2026-01-31T14:00:00+05:30", timeMax="2026-01-31T15:00:00+05:30")
+        → Check if slot is available
+
+STEP 3: create_event(start="2026-01-31T14:00:00+05:30", end="2026-01-31T15:00:00+05:30", ...)
+        → Create booking
 ```
 
-**Re-checking:**
-- Can check again during long conversations
-- NOT required for every single tool call
-- Only re-check if temporal context unclear
+**ISO 8601 Format Reminder:**
+- Format: YYYY-MM-DDTHH:MM:SS+HH:MM
+- Example: "2026-01-31T14:00:00+05:30"
+- Use 24-hour format (14:00 = 2 PM, NOT 2:00)
+- Always include timezone offset
 
 **DO:**
 ✅ Call get_current_datetime() before first time operation
-✅ Convert "tomorrow" → actual ISO date
-✅ Include timezone in all timestamps
+✅ Convert relative terms to actual ISO 8601 dates
+✅ Include timezone offset in all timestamps
 
 **DON'T:**
 ❌ Skip datetime check and guess the date
-❌ Use "tomorrow" in tool parameters
-❌ Check redundantly on every tool call
+❌ Use relative terms in tool parameters ("tomorrow", "next week")
+❌ Use 12-hour format (use 14:00, not 2:00 PM)
+❌ Forget timezone offset
+
+**VIOLATION = INCORRECT BOOKINGS. Always follow this rule.**
 
 """
 
+
+__all__ = ["datetime_awareness_prompt"]

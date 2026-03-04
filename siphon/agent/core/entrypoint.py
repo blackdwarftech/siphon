@@ -313,6 +313,12 @@ async def entrypoint(
                 else:
                     logger.info(f"No previous call memory found for {phone_number}")
         
+        # Inject calendar operation guidelines if Google Calendar integration is enabled
+        if google_calendar:
+            from siphon.agent.internal_prompts import calendar_guidelines_prompt
+            enhanced_instructions = enhanced_instructions + "\n\n" + calendar_guidelines_prompt
+            logger.info("Injected calendar operation guidelines into system instructions")
+        
         agent_setup = agent_cls(
             config=metadata,
             send_greeting=send_greeting,

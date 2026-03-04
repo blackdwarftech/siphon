@@ -5,6 +5,12 @@ from . import services
 logger = get_logger("google-calendar")
 
 class GoogleCalendar:
+    """Google Calendar integration for voice AI agents.
+    
+    Provides tools for listing, creating, updating, and deleting calendar events.
+    All operations return structured messages with SUCCESS or ERROR status.
+    """
+    
     def __init__(self) -> None:
         pass
 
@@ -18,25 +24,29 @@ class GoogleCalendar:
         timeMax: str | None = None,
         maxResults: int = 10,
     ) -> str:
-        """
-        Retrieve a list of calendar events based on specified filters.
-
-        This function queries the calendar for events that match the given criteria.
-        All filter parameters are optional and can be used in combination to narrow
-        down the results.
-
+        """List calendar events within a time range. Use this to check availability before booking.
+        
+        MANDATORY BEFORE CREATE_EVENT: Call get_current_datetime() first to know today's date,
+        then call this function to check if a time slot is available.
+        
         Args:
-            summary (str, optional): Filter events by their summary (title or subject).
-            description (str, optional): Filter events by text found in the event description.
-            location (str, optional): Filter events based on their location.
-            timeMin (str, optional): ISO 8601 formatted lower time bound (exclusive)
-                for filtering events by end time. Must be in local time and have timezone offset.
-            timeMax (str, optional): ISO 8601 formatted upper time bound (exclusive)
-                for filtering events by start time. Must be in local time and have timezone offset.
-            maxResults (int, optional): Maximum number of events to return.
-
+            summary: Filter by event title (optional)
+            description: Filter by text in description (optional). Use this to search for a caller's phone number.
+            location: Filter by location (optional)
+            timeMin: Start of search range in ISO 8601 format (e.g., "2026-01-15T09:00:00+05:30"). REQUIRED for accurate results.
+            timeMax: End of search range in ISO 8601 format (e.g., "2026-01-15T18:00:00+05:30"). Optional.
+            maxResults: Maximum events to return (default: 10, max: 50)
+        
         Returns:
-            list: A list of event objects that match the provided filters.
+            A structured message with SUCCESS or ERROR status. Each event includes:
+            - event_id: Required for update/delete operations
+            - Title, start time, end time (formatted for reading)
+            - Description and location if available
+        
+        Example correct usage:
+            1. Call get_current_datetime() → "Thursday, January 15, 2026 at 10:00 AM IST"
+            2. Call list_events(timeMin="2026-01-15T14:00:00+05:30", timeMax="2026-01-15T15:00:00+05:30")
+            3. Check if the time slot is free before creating an event
         """
         return await services.list_events(
             summary=summary,
@@ -57,17 +67,35 @@ class GoogleCalendar:
         summary: str,
         description: str | None = None,
         location: str | None = None,
+        attendees: str | None = None,
     ) -> str:
-        """
-        Creates a calendar event using the provided details.
-
+        """Create a new calendar event. MANDATORY: Check availability with list_events() first.
+        
+        REQUIRED PRE-STEPS (follow this order):
+        1. Call get_current_datetime() to get today's date and timezone
+        2. Call list_events() to check if the requested time slot is available
+        3. Only proceed with create_event if the slot is free
+        
         Args:
-            start (str): Event start time in ISO 8601 format (e.g., '2025-04-06T10:00:00-07:00').
-            end (str): Event end time in ISO 8601 format (e.g., '2025-04-06T11:00:00-07:00').
-            timeZone (str): User timezone formatted as an IANA Time Zone Database name (e.g. "Europe/Zurich").
-            summary (str): Short title or subject of the event.
-            description (str, optional): Detailed description or notes for the event. Defaults to None.
-            location (str, optional): Physical or virtual location of the event. Defaults to None.
+            start: Event start time in ISO 8601 format with timezone offset.
+                   Example: "2026-01-15T14:00:00+05:30" (January 15, 2026 at 2 PM IST)
+            end: Event end time in ISO 8601 format with timezone offset.
+                 Example: "2026-01-15T15:00:00+05:30" (January 15, 2026 at 3 PM IST)
+            timeZone: IANA timezone name (e.g., "Asia/Kolkata", "America/New_York", "Europe/London")
+            summary: Event title. Example: "Appointment - John Smith"
+            description: Event details. MUST include caller's phone number for identification.
+                        Example: "Patient Name: John Smith\nPhone: +919876543210\nReason: Cleaning"
+            location: Physical or virtual location (optional)
+            attendees: Email address(es) to invite. They will receive Google Calendar notification.
+                      Can be single email or comma-separated. Example: "john@example.com" or "john@example.com, jane@example.com"
+        
+        Returns:
+            A structured message with SUCCESS or ERROR status.
+            On SUCCESS: Includes event_id, formatted times, and a reminder to read back details to caller.
+            On ERROR: Includes specific error message (invalid format, time conflict, etc.)
+        
+        IMPORTANT: After successful creation, ALWAYS read back the event details to the caller
+        for confirmation, including the date, time, and purpose.
         """
         return await services.create_event(
             start=start,
@@ -76,16 +104,26 @@ class GoogleCalendar:
             summary=summary,
             description=description,
             location=location,
+            attendees=attendees,
         )
 
 
     @function_tool()
-    async def delete_event(self, event_id: str):
-        """
-        Deletes an event from the calender.
-
+    async def delete_event(self, event_id: str) -> str:
+        """Delete a calendar event. You MUST have the event_id from a previous list_events call.
+        
+        REQUIRED PRE-STEP: Call list_events() first to find the event_id of the event to delete.
+        
         Args:
-            event_id: Event identifier.
+            event_id: The unique identifier of the event to delete. 
+                      You get this from list_events() results.
+        
+        Returns:
+            A structured message with SUCCESS or ERROR status.
+            On ERROR: Includes reason (event not found, permission denied, etc.)
+        
+        IMPORTANT: Always confirm with the caller BEFORE deleting an event.
+        Read back the event details and ask for explicit confirmation.
         """
         return await services.delete_event(event_id=event_id)
 
@@ -100,19 +138,33 @@ class GoogleCalendar:
         summary: str | None = None,
         description: str | None = None,
         location: str | None = None,
-    ):
-        """
-        Updates an event by replacing specified fields with new values.
-        Any fields not included in the request will retain their existing values.
-
+        attendees: str | None = None,
+    ) -> str:
+        """Update an existing calendar event. You MUST have the event_id from list_events().
+        
+        REQUIRED PRE-STEPS:
+        1. Call list_events() to find the event and get its event_id
+        2. If changing the time, call get_current_datetime() and list_events() to check new slot availability
+        3. Confirm the changes with the caller before proceeding
+        
         Args:
-            event_id (str): Event identifier.
-            start (str, optional): Event start time in ISO 8601 format (e.g., '2025-04-06T10:00:00-04:00'). Defaults to None.
-            end (str, optional): Event end time in ISO 8601 format (e.g., '2025-04-06T11:00:00-04:00'). Defaults to None.
-            timeZone (str, optional): User timezone formatted as an IANA Time Zone Database name (e.g. "Europe/Zurich"). Defaults to None.
-            summary (str, optional): Short title or subject of the event. Defaults to None.
-            description (str, optional): Detailed description or notes for the event. Defaults to None.
-            location (str, optional): Physical or virtual location of the event. Defaults to None.
+            event_id: The unique identifier of the event to update. REQUIRED.
+                      Get this from list_events() results.
+            start: New start time in ISO 8601 format (optional). Example: "2026-01-16T10:00:00+05:30"
+            end: New end time in ISO 8601 format (optional). Example: "2026-01-16T11:00:00+05:30"
+            timeZone: New IANA timezone name (optional). Example: "Asia/Kolkata"
+            summary: New event title (optional)
+            description: New description (optional)
+            location: New location (optional)
+            attendees: Email address(es) to invite. They will receive Google Calendar notification.
+                      Can be single email or comma-separated. Example: "john@example.com"
+        
+        Returns:
+            A structured message with SUCCESS or ERROR status.
+            On SUCCESS: Lists which fields were updated.
+            On ERROR: Includes specific error message.
+        
+        NOTE: Only provide the fields you want to change. Omitted fields keep their current values.
         """
         return await services.update_event(
             event_id=event_id,
@@ -122,4 +174,5 @@ class GoogleCalendar:
             summary=summary,
             description=description,
             location=location,
+            attendees=attendees,
         )
