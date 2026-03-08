@@ -28,8 +28,10 @@ Example Usage:
 
 from siphon.memory.models import (
     ConversationSummary,
-    CallerMemory, 
-    SummaryResult, 
+    CallerMemory,
+    CallerProfile,
+    SummaryResult,
+    ProfileResult,
     MemoryContext
 )
 from siphon.memory.storage import MemoryStore, LocalMemoryStore, create_memory_store
@@ -41,7 +43,9 @@ __all__ = [
     # Models
     "ConversationSummary",
     "CallerMemory",
+    "CallerProfile",
     "SummaryResult",
+    "ProfileResult",
     "MemoryContext",
     # Storage
     "MemoryStore",

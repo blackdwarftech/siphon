@@ -1,16 +1,42 @@
 import asyncio
 import time
+from datetime import datetime
 from livekit.agents.voice import Agent
 from livekit import rtc
 from livekit.agents import ChatContext
 from siphon.config import get_logger, HangupCall, CallTranscription
-from siphon.agent.internal_prompts import call_agent_prompt, proactive_agent_prompt, datetime_awareness_prompt
+from siphon.config.timezone_utils import get_timezone, get_timezone_name
+from siphon.agent.internal_prompts import call_agent_prompt
 import os
 
 logger = get_logger("calling-agent")
 
 from typing import Optional
 from siphon.memory import MemoryService
+
+
+def _get_current_datetime_stamp() -> str:
+    """Generate a current date/time stamp for injection into the system prompt.
+    
+    This ensures the LLM always knows the real date/time without needing
+    to call a tool (LLMs often skip tool calls and hallucinate dates).
+    """
+    tz = get_timezone()
+    tz_name = get_timezone_name() or "local time"
+    
+    if tz is not None:
+        now = datetime.now(tz)
+        formatted = now.strftime("%A, %B %d, %Y at %I:%M %p %Z")
+    else:
+        now = datetime.now()
+        formatted = now.strftime("%A, %B %d, %Y at %I:%M %p")
+    
+    return (
+        f"\n**CURRENT DATE AND TIME: {formatted}**\n"
+        f"Today is {now.strftime('%A')}. The year is {now.year}. "
+        f"Use this as your reference for ALL date/time operations. "
+        f"Do NOT guess or assume any other date.\n"
+    )
 
 
 class AgentSetup(Agent, HangupCall, CallTranscription):
@@ -50,8 +76,7 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
         self.send_greeting = send_greeting
         self.greeting_instructions = greeting_instructions
         
-        # Extract and preserve all prompt components
-        # The system_instructions may contain: base + calendar_guidelines + memory_context
+        # Build system instructions: base + datetime + core agent rules + calendar + memory
         memory_context = ""
         calendar_context = ""
         base_instructions = system_instructions
@@ -70,12 +95,15 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
                 base_instructions = parts[0].strip()
                 calendar_context = "---\n## INTERNAL RULES - CALENDAR OPERATIONS" + parts[1]
         
-        # Reconstruct in correct order: base + internal rules + calendar + memory
+        # Inject real current date/time directly into the prompt
+        # This prevents the LLM from hallucinating dates from its training data
+        datetime_stamp = _get_current_datetime_stamp()
+        
+        # Reconstruct: base + datetime + core rules + calendar + memory
         self.system_instructions = (
             base_instructions + 
-            "\n\n" + call_agent_prompt + 
-            "\n\n" + proactive_agent_prompt +
-            "\n\n" + datetime_awareness_prompt +
+            "\n\n" + datetime_stamp +
+            "\n\n" + call_agent_prompt +
             ("\n\n" + calendar_context if calendar_context else "") +
             ("\n\n" + memory_context if memory_context else "")
         )
@@ -125,7 +153,7 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
                     logger.error(f"Recording setup error: {e}") 
 
         async def setup_conversation_monitoring():
-            if self.save_transcription:
+            if self.save_transcription or self._call_memory_enabled:
                 try:
                     await self.setup_conversation_monitoring(self.session)
                     logger.info("Conversation monitoring setup")

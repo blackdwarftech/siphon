@@ -8,8 +8,8 @@ class STT(ClientWrapperMixin):
     """Clova-backed STT wrapper around the LiveKit Clova plugin."""
     def __init__(
         self,
-        language: Optional[str] = "en-IN",
-        model: Optional[str] = "saarika:v2.5",
+        language: Optional[str] = "unknown",
+        model: Optional[str] = "saaras:v3",
         api_key: Optional[str] = None,
     ) -> None:
         if api_key is None:
@@ -53,10 +53,10 @@ class TTS(ClientWrapperMixin):
     def __init__(
         self,
         target_language_code: Optional[str] = "en-IN",
-        model: Optional[str] = "bulbul:v2",
-        speaker: Optional[str] = "anushka",
+        model: Optional[str] = "bulbul:v3",
+        speaker: Optional[str] = "shubh",
         speech_sample_rate: Optional[int] = 22050,
-        enable_preprocessing: Optional[bool] = False,
+        enable_preprocessing: Optional[bool] = True,
         api_key: Optional[str] = None,
     ) -> None:
         if api_key is None:

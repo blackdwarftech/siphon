@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 from datetime import datetime
-from siphon.memory.models import CallerMemory, ConversationSummary, SummaryResult
+from siphon.memory.models import CallerMemory, CallerProfile, ConversationSummary, SummaryResult
 from siphon.memory.storage import MemoryStore, create_memory_store
 from siphon.memory.extraction.summarizer import ConversationSummarizer
 from siphon.memory.enrichment import MemoryEnricher
@@ -18,6 +18,7 @@ class MemoryService:
     Orchestrates:
     - Storage (loading/saving memory)
     - Summarization (generating summaries from conversations)
+    - Profile extraction (structured caller identity)
     - Enrichment (formatting memory for prompts)
     - Caching (Redis cache layer for fast lookups)
     """
@@ -65,12 +66,6 @@ class MemoryService:
         1. Check cache first
         2. If cache miss, load from database
         3. Update cache on successful load
-        
-        Args:
-            phone_number: Phone number to load (uses stored if not provided)
-            
-        Returns:
-            CallerMemory if found, None otherwise
         """
         if not self._enabled:
             return None
@@ -113,18 +108,10 @@ class MemoryService:
         """Save memory after a call.
         
         Uses write-through pattern:
-        1. Save to database
-        2. Update cache
-        
-        Generates summary from conversation and appends to existing memory.
-        
-        Args:
-            phone_number: Phone number to save for
-            conversation_history: Conversation messages to summarize
-            llm: LLM for summarization
-            
-        Returns:
-            True if saved successfully
+        1. Generate summary from conversation
+        2. Extract caller profile
+        3. Save to database
+        4. Update cache
         """
         if not self._enabled:
             logger.debug("Memory service not enabled, skipping save")
@@ -145,23 +132,45 @@ class MemoryService:
             else:
                 logger.debug(f"Found existing memory with {existing.total_calls} calls and {len(existing.summaries)} summaries")
 
-            # Generate summary for this call
+            # Generate summary and extract profile in parallel
             new_summary: Optional[ConversationSummary] = None
+            new_profile: Optional[CallerProfile] = None
+
             if conversation_history and llm:
+                summarizer = ConversationSummarizer(llm=llm)
+
+                # Generate summary
                 new_summary = await self._generate_summary(
-                    conversation_history, 
-                    llm, 
-                    existing.total_calls + 1
+                    summarizer, conversation_history, existing.total_calls + 1
+                )
+
+                # Extract caller profile
+                new_profile = await self._extract_profile(
+                    summarizer, conversation_history, phone
                 )
 
             # Build updated memory
             now = datetime.utcnow()
             new_call_count = existing.total_calls + 1
             
-            # Create new summary list
+            # Merge summaries
             updated_summaries = list(existing.summaries)
             if new_summary:
                 updated_summaries.append(new_summary)
+
+            # Merge caller profile
+            merged_profile = existing.caller_profile
+            if new_profile:
+                if merged_profile:
+                    merged_profile = merged_profile.merge(new_profile)
+                else:
+                    merged_profile = new_profile
+            # Always ensure phone is set on the profile
+            if merged_profile:
+                if not merged_profile.phone:
+                    merged_profile.phone = phone
+            else:
+                merged_profile = CallerProfile(phone=phone)
 
             memory = CallerMemory(
                 phone_number=phone,
@@ -169,11 +178,12 @@ class MemoryService:
                 last_call_date=now,
                 total_calls=new_call_count,
                 summaries=updated_summaries,
+                caller_profile=merged_profile,
             )
 
             # Save to store
             await self._store.save(phone, memory)
-            logger.info(f"Saved memory for {phone}: {memory.total_calls} calls, {len(updated_summaries)} summaries")
+            logger.info(f"Saved memory for {phone}: {memory.total_calls} calls, {len(updated_summaries)} summaries, profile={merged_profile}")
             
             # Update cache (write-through)
             await self._cache.set_memory(phone, memory.model_dump())
@@ -191,44 +201,28 @@ class MemoryService:
         base_instructions: str,
         memory: Optional[CallerMemory] = None
     ) -> str:
-        """Enhance instructions with memory context.
-        
-        Args:
-            base_instructions: Original system instructions
-            memory: Memory to use (loads if not provided)
-            
-        Returns:
-            Enhanced instructions
-        """
+        """Enhance instructions with memory context."""
         mem = memory or self._loaded_memory
         return self._enricher.enhance_instructions(base_instructions, mem)
 
     def format_memory_for_prompt(self, memory: Optional[CallerMemory] = None) -> str:
-        """Format memory as prompt text.
-        
-        Args:
-            memory: Memory to format (uses loaded if not provided)
-            
-        Returns:
-            Formatted memory string
-        """
+        """Format memory as prompt text."""
         mem = memory or self._loaded_memory
         context = self._enricher.format(mem)
         return context.full_context
 
     async def _generate_summary(
         self,
+        summarizer: ConversationSummarizer,
         conversation_history: List[Dict[str, Any]],
-        llm: Any,
         call_number: int
     ) -> Optional[ConversationSummary]:
         """Generate summary from conversation using LLM."""
         try:
-            summarizer = ConversationSummarizer(llm=llm)
             result = await summarizer.summarize(conversation_history)
             
             if result.success and result.summary:
-                logger.info(f"Generated summary for call #{call_number}: {result.summary[:50]}...")
+                logger.info(f"Generated summary for call #{call_number}: {result.summary[:80]}...")
                 return ConversationSummary(
                     timestamp=datetime.utcnow(),
                     summary=result.summary,
@@ -242,16 +236,28 @@ class MemoryService:
             logger.error(f"Error generating summary: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return None
+
+    async def _extract_profile(
+        self,
+        summarizer: ConversationSummarizer,
+        conversation_history: List[Dict[str, Any]],
+        phone: str,
+    ) -> Optional[CallerProfile]:
+        """Extract caller profile from conversation."""
+        try:
+            result = await summarizer.extract_profile(conversation_history)
+            if result.success and result.profile:
+                # Ensure phone is always set
+                if not result.profile.phone:
+                    result.profile.phone = phone
+                return result.profile
+            return None
+        except Exception as e:
+            logger.error(f"Error extracting profile: {e}")
+            return None
     
     async def invalidate_cache(self, phone_number: Optional[str] = None) -> bool:
-        """Invalidate cached memory for a phone number.
-        
-        Args:
-            phone_number: Phone number to invalidate (uses stored if not provided)
-            
-        Returns:
-            True if cache was invalidated
-        """
+        """Invalidate cached memory for a phone number."""
         phone = phone_number or self._phone_number
         if not phone:
             return False

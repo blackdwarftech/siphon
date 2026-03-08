@@ -29,11 +29,17 @@ class GoogleCalendar:
         MANDATORY BEFORE CREATE_EVENT: Call get_current_datetime() first to know today's date,
         then call this function to check if a time slot is available.
         
+        *** CRITICAL RESCHEDULING / CANCELLING WARNING ***
+        If you are searching for an EXISTING appointment because the user wants to RESCHEDULE or CANCEL:
+        - DO NOT set timeMin and timeMax to the NEW requested date! The existing appointment is not there yet!
+        - Leave timeMin as default (or set it to today) to search all upcoming events.
+        - Only use the `description` parameter exactly as instructed below to find the user's booking.
+        
         Args:
             summary: Filter by event title (optional)
-            description: Filter by text in description (optional). Use this to search for a caller's phone number.
+            description: Filter by text in description (optional). **CRITICAL**: Use ONLY the caller's phone number or email here. DO NOT pass full sentences or the entire original description block, as this will cause the search to fail.
             location: Filter by location (optional)
-            timeMin: Start of search range in ISO 8601 format (e.g., "2026-01-15T09:00:00+05:30"). REQUIRED for accurate results.
+            timeMin: Start of search range in ISO 8601 format (e.g., "2026-01-15T09:00:00+05:30"). REQUIRED for accurate results when checking availability for NEW bookings.
             timeMax: End of search range in ISO 8601 format (e.g., "2026-01-15T18:00:00+05:30"). Optional.
             maxResults: Maximum events to return (default: 10, max: 50)
         
@@ -142,10 +148,12 @@ class GoogleCalendar:
     ) -> str:
         """Update an existing calendar event. You MUST have the event_id from list_events().
         
-        REQUIRED PRE-STEPS:
-        1. Call list_events() to find the event and get its event_id
-        2. If changing the time, call get_current_datetime() and list_events() to check new slot availability
-        3. Confirm the changes with the caller before proceeding
+        REQUIRED PRE-STEPS for RESCHEDULING:
+        1. Call list_events() to find the EXISTING event and get its event_id. 
+           CRITICAL: Do NOT pass the *new* date into list_events() timeMin/timeMax. 
+           Search using ONLY the caller's phone number or email to find their current booking.
+        2. Once you have the event_id, call get_current_datetime() and list_events() again (this time using the NEW date in timeMin/timeMax) to check if the new slot is available.
+        3. Confirm the changes with the caller before calling update_event.
         
         Args:
             event_id: The unique identifier of the event to update. REQUIRED.
