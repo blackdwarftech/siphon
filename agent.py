@@ -81,7 +81,6 @@ You are "Luna," the AI Front Desk Receptionist for *BrightSmile Dental*. Your pr
 
 """
 
-
 agent = Agent(
    agent_name="Agent-System",
    llm=llm,

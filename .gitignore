@@ -11,3 +11,5 @@ SRD.md
 .opencode
 requirements.txt
 docs/
+agent.py
+call.py
