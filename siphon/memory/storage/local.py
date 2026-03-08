@@ -2,6 +2,7 @@
 
 import json
 import os
+import asyncio
 from typing import Optional
 from siphon.memory.storage.base import MemoryStore
 from siphon.memory.models import CallerMemory
@@ -33,16 +34,32 @@ class LocalMemoryStore(MemoryStore):
         safe_phone = phone_number.lstrip("+").replace(" ", "_").replace("-", "_")
         return os.path.join(self.base_folder, f"{safe_phone}.json")
 
+    def _read_file_sync(self, file_path: str) -> Optional[dict]:
+        if not os.path.exists(file_path):
+            return None
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _write_file_sync(self, file_path: str, data: dict) -> None:
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+
+    def _delete_file_sync(self, file_path: str) -> bool:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return True
+        return False
+
+    def _exists_sync(self, file_path: str) -> bool:
+        return os.path.exists(file_path)
+
     async def get(self, phone_number: str) -> Optional[CallerMemory]:
         """Load memory from JSON file."""
         try:
             file_path = self._get_file_path(phone_number)
-            if not os.path.exists(file_path):
+            data = await asyncio.to_thread(self._read_file_sync, file_path)
+            if data is None:
                 return None
-            
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
             return CallerMemory.model_validate(data)
         except Exception as e:
             logger.error(f"Error loading memory from {file_path}: {e}")
@@ -52,8 +69,8 @@ class LocalMemoryStore(MemoryStore):
         """Save memory to JSON file."""
         try:
             file_path = self._get_file_path(phone_number)
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(memory.model_dump(), f, indent=2, ensure_ascii=False, default=str)
+            data = memory.model_dump()
+            await asyncio.to_thread(self._write_file_sync, file_path, data)
             logger.info(f"Call memory saved to {file_path}")
         except Exception as e:
             logger.error(f"Error saving memory to {file_path}: {e}")
@@ -62,10 +79,7 @@ class LocalMemoryStore(MemoryStore):
         """Delete memory file."""
         try:
             file_path = self._get_file_path(phone_number)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                return True
-            return False
+            return await asyncio.to_thread(self._delete_file_sync, file_path)
         except Exception as e:
             logger.error(f"Error deleting memory for {phone_number}: {e}")
             return False
@@ -73,4 +87,4 @@ class LocalMemoryStore(MemoryStore):
     async def exists(self, phone_number: str) -> bool:
         """Check if memory exists."""
         file_path = self._get_file_path(phone_number)
-        return os.path.exists(file_path)
+        return await asyncio.to_thread(self._exists_sync, file_path)
