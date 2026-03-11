@@ -13,6 +13,9 @@
   </a>
   <a href="https://pypi.org/project/siphon-ai/">
     <img src="https://img.shields.io/pypi/v/siphon-ai?style=for-the-badge&logo=pypi&logoColor=white" alt="PyPI">
+  </a><br/>
+  <a href="https://pepy.tech/projects/siphon-ai">
+    <img src="https://static.pepy.tech/personalized-badge/siphon-ai?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads" alt="PyPI Downloads">
   </a>
 </p>
 
