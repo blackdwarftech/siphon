@@ -1,6 +1,6 @@
 from typing import Dict, Any
 
-async def get_stt_component(stt_config: Dict[str, Any]) -> Any:
+def get_stt_component(stt_config: Dict[str, Any]) -> Any:
     provider = stt_config.get("provider")
     
     if provider == "assemblyai":

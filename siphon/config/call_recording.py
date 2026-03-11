@@ -17,7 +17,7 @@ class CallRecording:
         self.filename = None
         self.s3_bucket = None
         
-    async def _get_s3_config(self):
+    def _get_s3_config(self):
         """Return S3/MinIO configuration derived from environment variables."""
         s3_endpoint = os.getenv("AWS_S3_ENDPOINT")  # MinIO: http://localhost:9000
 
@@ -36,7 +36,7 @@ class CallRecording:
         s3_force_path_style = os.getenv("AWS_S3_FORCE_PATH_STYLE", "false").lower() == "true"
         
         if not all([s3_access_key, s3_secret_key, s3_bucket]):
-            raise Exception(
+            raise RuntimeError(
                 "S3/MinIO credentials missing. Set:\n"
                 "  AWS_S3_ACCESS_KEY_ID / MINIO_ACCESS_KEY\n"
                 "  AWS_S3_SECRET_ACCESS_KEY / MINIO_SECRET_KEY\n"
@@ -53,11 +53,11 @@ class CallRecording:
             "force_path_style": s3_force_path_style,
         }
     
-    async def _get_livekit_api(self):
+    def _get_livekit_api(self):
         """Return LiveKit API bound to the current job context."""
         ctx = get_job_context()
         if ctx is None:
-            raise Exception("No job context available")
+            raise RuntimeError("No job context available")
         return ctx.api
         
     async def start_recording(self) -> str:
@@ -65,9 +65,9 @@ class CallRecording:
         try:
             ctx = get_job_context()
             if ctx is None:
-                raise Exception("No job context available")
+                raise RuntimeError("No job context available")
             
-            livekit_api = await self._get_livekit_api()
+            livekit_api = self._get_livekit_api()
 
             # Build per-room, per-call key: <room>/<timestamp>/call_...ogg
             tz = get_timezone()
@@ -79,7 +79,7 @@ class CallRecording:
             s3_key = f"{folder}/{self.filename}"
             self.s3_key = s3_key
 
-            s3_config = await self._get_s3_config()
+            s3_config = self._get_s3_config()
 
             logger.info(f"🚀 Starting recording to {s3_config['bucket']}/{s3_key}")
 
@@ -125,7 +125,7 @@ class CallRecording:
                 logger.warning("No active recording to stop")
                 return None
             
-            livekit_api = await self._get_livekit_api()
+            livekit_api = self._get_livekit_api()
             
             # Stop the egress (recording)
             request = api.StopEgressRequest(egress_id=self.recording_id)
@@ -180,7 +180,7 @@ class CallRecording:
                     logger.error(f"Error stopping recording while discarding: {e}")
 
             # Ensure we have S3 configuration and key
-            s3_config = await self._get_s3_config()
+            s3_config = self._get_s3_config()
             key = getattr(self, "s3_key", self.filename)
             if not key:
                 logger.warning("No S3 key found for recording; nothing to discard")
@@ -200,7 +200,16 @@ class CallRecording:
                 client_kwargs["config"] = Config(s3={"addressing_style": "path"})
 
             s3_client = session.client("s3", **client_kwargs)
-            s3_client.delete_object(Bucket=s3_config["bucket"], Key=key)
+            
+            delete_kwargs = {
+                "Bucket": s3_config["bucket"],
+                "Key": key
+            }
+            expected_owner = os.getenv("AWS_S3_EXPECTED_BUCKET_OWNER")
+            if expected_owner:
+                delete_kwargs["ExpectedBucketOwner"] = expected_owner
+                
+            s3_client.delete_object(**delete_kwargs)
             logger.info(f"🗑️ Discarded recording from s3://{s3_config['bucket']}/{key}")
 
         except Exception as e:

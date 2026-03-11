@@ -89,7 +89,7 @@ async def _get_redis_client():
         return None
 
 
-async def _with_stampede_protection(key: str, fetch_func, ttl: int = None) -> Any:
+async def _with_stampede_protection(key: str, fetch_func) -> Any:
     """Prevent cache stampede using simple lock mechanism.
     
     If multiple requests come for same key simultaneously, only one fetches

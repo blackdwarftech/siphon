@@ -4,6 +4,8 @@ import os
 from livekit.plugins import google
 from . import ClientWrapperMixin
 
+ERR_MISSING_API_KEY = "GEMINI_API_KEY environment variable is not set"
+
 class LLM(ClientWrapperMixin):
     """Gemini-backed LLM wrapper around the LiveKit Google plugin."""
     def __init__(
@@ -23,7 +25,7 @@ class LLM(ClientWrapperMixin):
         self.temperature = temperature
 
         if not self.api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is not set")
+            raise ValueError(ERR_MISSING_API_KEY)
 
         self._client = self._build_client()
 
@@ -71,7 +73,7 @@ class TTS(ClientWrapperMixin):
         self.api_key = api_key
 
         if not self.api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is not set")
+            raise ValueError(ERR_MISSING_API_KEY)
 
         self._client = self._build_client()
 
@@ -119,7 +121,7 @@ class Realtime(ClientWrapperMixin):
         self.api_key = api_key
 
         if not self.api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is not set")
+            raise ValueError(ERR_MISSING_API_KEY)
 
         self._client = self._build_client()
 

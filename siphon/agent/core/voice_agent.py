@@ -22,7 +22,6 @@ def _get_current_datetime_stamp() -> str:
     to call a tool (LLMs often skip tool calls and hallucinate dates).
     """
     tz = get_timezone()
-    tz_name = get_timezone_name() or "local time"
     
     if tz is not None:
         now = datetime.now(tz)
@@ -135,6 +134,38 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
         # Initialize transcription mixin for conversation tracking
         CallTranscription.__init__(self)
 
+    async def _setup_recording_task(self):
+        if self.call_recording:
+            try:
+                # Minimal delay for room stability
+                await asyncio.sleep(0.5)  # Reduced from 1 second
+                await self.start_recording()
+                logger.info("Recording started...")
+            except Exception as e:
+                logger.error(f"Recording setup error: {e}") 
+
+    async def _setup_monitoring_task(self):
+        if self.save_transcription or self._call_memory_enabled:
+            try:
+                self.setup_conversation_monitoring(self.session)
+                logger.info("Conversation monitoring setup")
+            except Exception as e:
+                logger.error(f"Monitoring setup error: {e}")
+
+    async def _send_greeting_task(self):
+        try:
+            if self.send_greeting and not self._greeting_sent:
+                greeting_instructions = self.greeting_instructions
+                await self.session.generate_reply(
+                    instructions=greeting_instructions,
+                    allow_interruptions=self.interruptions_allowed
+                )
+                
+                self._greeting_sent = True
+                logger.info("Greeting sent")
+        except Exception as e:
+            logger.error(f"Greeting error: {e}", exc_info=True)
+
     # Agent lifecycle
     async def on_enter(self):
         """Send an optional greeting when the agent joins the room."""
@@ -142,42 +173,10 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
         self.call_start_time = time.time()
         logger.info("Agent entering room...")
 
-        async def setup_recording():
-            if self.call_recording:
-                try:
-                    # Minimal delay for room stability
-                    await asyncio.sleep(0.5)  # Reduced from 1 second
-                    await self.start_recording()
-                    logger.info("Recording started...")
-                except Exception as e:
-                    logger.error(f"Recording setup error: {e}") 
-
-        async def setup_conversation_monitoring():
-            if self.save_transcription or self._call_memory_enabled:
-                try:
-                    await self.setup_conversation_monitoring(self.session)
-                    logger.info("Conversation monitoring setup")
-                except Exception as e:
-                    logger.error(f"Monitoring setup error: {e}")
-
-        async def send_greeting():
-            try:
-                if self.send_greeting and not self._greeting_sent:
-                    greeting_instructions = self.greeting_instructions
-                    await self.session.generate_reply(
-                        instructions=greeting_instructions,
-                        allow_interruptions=self.interruptions_allowed
-                    )
-                    
-                    self._greeting_sent = True
-                    logger.info("Greeting sent")
-            except Exception as e:
-                logger.error(f"Greeting error: {e}", exc_info=True)
-
         await asyncio.gather(
-            setup_recording(),
-            setup_conversation_monitoring(),
-            send_greeting(),
+            self._setup_recording_task(),
+            self._setup_monitoring_task(),
+            self._send_greeting_task(),
             return_exceptions=True
         )
     

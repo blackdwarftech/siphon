@@ -32,7 +32,7 @@ class CallTranscription:
         try:
             ctx = get_job_context()
             if ctx is None:
-                raise Exception("No job context available")
+                raise RuntimeError("No job context available")
 
             payload = {"conversation": self.conversation_history}
 
@@ -70,7 +70,7 @@ class CallTranscription:
                 "timestamp": datetime.now(self.tz).strftime("%Y-%m-%d %I:%M:%S %p %Z")
             })
 
-    async def setup_conversation_monitoring(self, session) -> None:
+    def setup_conversation_monitoring(self, session) -> None:
         """Set up event listeners for conversation monitoring."""
         # Listen to conversation_item_added event for both user and agent messages
         session.on("conversation_item_added", self._on_conversation_item_added)

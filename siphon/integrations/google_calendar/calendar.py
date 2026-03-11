@@ -12,6 +12,7 @@ class GoogleCalendar:
     """
     
     def __init__(self) -> None:
+        """Initialize the Google Calendar tool wrapper."""
         pass
 
     @function_tool()
@@ -20,9 +21,9 @@ class GoogleCalendar:
         summary: str | None = None,
         description: str | None = None,
         location: str | None = None,
-        timeMin: str | None = None,
-        timeMax: str | None = None,
-        maxResults: int = 10,
+        time_min: str | None = None,
+        time_max: str | None = None,
+        max_results: int = 10,
     ) -> str:
         """List calendar events within a time range. Use this to check availability before booking.
         
@@ -32,16 +33,16 @@ class GoogleCalendar:
         *** CRITICAL RESCHEDULING / CANCELLING WARNING ***
         If you are searching for an EXISTING appointment because the user wants to RESCHEDULE or CANCEL:
         - DO NOT set timeMin and timeMax to the NEW requested date! The existing appointment is not there yet!
-        - Leave timeMin as default (or set it to today) to search all upcoming events.
+        - Leave time_min as default (or set it to today) to search all upcoming events.
         - Only use the `description` parameter exactly as instructed below to find the user's booking.
         
         Args:
             summary: Filter by event title (optional)
             description: Filter by text in description (optional). **CRITICAL**: Use ONLY the caller's phone number or email here. DO NOT pass full sentences or the entire original description block, as this will cause the search to fail.
             location: Filter by location (optional)
-            timeMin: Start of search range in ISO 8601 format (e.g., "2026-01-15T09:00:00+05:30"). REQUIRED for accurate results when checking availability for NEW bookings.
-            timeMax: End of search range in ISO 8601 format (e.g., "2026-01-15T18:00:00+05:30"). Optional.
-            maxResults: Maximum events to return (default: 10, max: 50)
+            time_min: Start of search range in ISO 8601 format (e.g., "2026-01-15T09:00:00+05:30"). REQUIRED for accurate results when checking availability for NEW bookings.
+            time_max: End of search range in ISO 8601 format (e.g., "2026-01-15T18:00:00+05:30"). Optional.
+            max_results: Maximum events to return (default: 10, max: 50)
         
         Returns:
             A structured message with SUCCESS or ERROR status. Each event includes:
@@ -51,16 +52,16 @@ class GoogleCalendar:
         
         Example correct usage:
             1. Call get_current_datetime() → "Thursday, January 15, 2026 at 10:00 AM IST"
-            2. Call list_events(timeMin="2026-01-15T14:00:00+05:30", timeMax="2026-01-15T15:00:00+05:30")
+            2. Call list_events(time_min="2026-01-15T14:00:00+05:30", time_max="2026-01-15T15:00:00+05:30")
             3. Check if the time slot is free before creating an event
         """
         return await services.list_events(
             summary=summary,
             description=description,
             location=location,
-            timeMin=timeMin,
-            timeMax=timeMax,
-            maxResults=maxResults,
+            time_min=time_min,
+            time_max=time_max,
+            max_results=max_results,
         )
 
 
@@ -69,7 +70,6 @@ class GoogleCalendar:
         self,
         start: str,
         end: str,
-        timeZone: str,
         summary: str,
         description: str | None = None,
         location: str | None = None,
@@ -87,7 +87,6 @@ class GoogleCalendar:
                    Example: "2026-01-15T14:00:00+05:30" (January 15, 2026 at 2 PM IST)
             end: Event end time in ISO 8601 format with timezone offset.
                  Example: "2026-01-15T15:00:00+05:30" (January 15, 2026 at 3 PM IST)
-            timeZone: IANA timezone name (e.g., "Asia/Kolkata", "America/New_York", "Europe/London")
             summary: Event title. Example: "Appointment - John Smith"
             description: Event details. MUST include caller's phone number for identification.
                         Example: "Patient Name: John Smith\nPhone: +919876543210\nReason: Cleaning"
@@ -106,7 +105,6 @@ class GoogleCalendar:
         return await services.create_event(
             start=start,
             end=end,
-            timeZone=timeZone,
             summary=summary,
             description=description,
             location=location,
@@ -140,7 +138,6 @@ class GoogleCalendar:
         event_id: str,
         start: str | None = None,
         end: str | None = None,
-        timeZone: str | None = None,
         summary: str | None = None,
         description: str | None = None,
         location: str | None = None,
@@ -150,9 +147,9 @@ class GoogleCalendar:
         
         REQUIRED PRE-STEPS for RESCHEDULING:
         1. Call list_events() to find the EXISTING event and get its event_id. 
-           CRITICAL: Do NOT pass the *new* date into list_events() timeMin/timeMax. 
+           CRITICAL: Do NOT pass the *new* date into list_events() time_min/time_max. 
            Search using ONLY the caller's phone number or email to find their current booking.
-        2. Once you have the event_id, call get_current_datetime() and list_events() again (this time using the NEW date in timeMin/timeMax) to check if the new slot is available.
+        2. Once you have the event_id, call get_current_datetime() and list_events() again (this time using the NEW date in time_min/time_max) to check if the new slot is available.
         3. Confirm the changes with the caller before calling update_event.
         
         Args:
@@ -160,7 +157,6 @@ class GoogleCalendar:
                       Get this from list_events() results.
             start: New start time in ISO 8601 format (optional). Example: "2026-01-16T10:00:00+05:30"
             end: New end time in ISO 8601 format (optional). Example: "2026-01-16T11:00:00+05:30"
-            timeZone: New IANA timezone name (optional). Example: "Asia/Kolkata"
             summary: New event title (optional)
             description: New description (optional)
             location: New location (optional)
@@ -178,7 +174,6 @@ class GoogleCalendar:
             event_id=event_id,
             start=start,
             end=end,
-            timeZone=timeZone,
             summary=summary,
             description=description,
             location=location,

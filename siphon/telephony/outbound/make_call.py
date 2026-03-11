@@ -10,12 +10,14 @@ from siphon.config import get_logger
 
 logger = get_logger("make-call")
 
+from pydantic import BaseModel, Field
+
 class SIPConfig(BaseModel):
-    name: Optional[str] = uuid.uuid4().hex,
-    sip_address: str = None,
-    sip_number: str = None,
-    sip_username: str = None,
-    sip_password: str = None
+    name: Optional[str] = Field(default_factory=lambda: uuid.uuid4().hex)
+    sip_address: Optional[str] = None
+    sip_number: Optional[str] = None
+    sip_username: Optional[str] = None
+    sip_password: Optional[str] = None
 
 class Call:
     def __init__(
@@ -107,42 +109,10 @@ class Call:
         trunk = Trunk()
         self.outbound_trunk_id = None
 
-        # When an explicit sip_trunk_id is provided (no SIP config object)
         if self.sip_trunk_id is not None:
-            self.outbound_trunk_id = self.sip_trunk_id
-
-            # If the caller did not provide a from-number, try to infer it
-            # from the trunk configuration itself.
-            if not self.number_to_call_from:
-                try:
-                    trunk_info = await trunk.get_trunk_by_id(self.sip_trunk_id)
-                    inferred_number = trunk_info.get("sip_number")
-                    if inferred_number:
-                        self.number_to_call_from = inferred_number
-                except Exception as e:
-                    logger.error("Failed to infer from-number from trunk %s: %s", self.sip_trunk_id, e)
-
-        # When sip trunk setup is given 
-        if self.sip_address is not None and self.sip_trunk_id is None:
-            # get trunk id if exists or create new one
-            trunk_id = await trunk.get_trunk(
-                sip_address=self.sip_address,
-                sip_number=self.sip_number,
-                sip_username=self.sip_username
-            )
-            if trunk_id and trunk_id.get("trunk_id") is not None:
-                self.outbound_trunk_id = trunk_id["trunk_id"]
-            else:
-                new_trunk = await trunk.create_trunk(
-                    name=self.sip_name,
-                    sip_address=self.sip_address,
-                    sip_number=self.sip_number,
-                    sip_username=self.sip_username,
-                    sip_password=self.sip_password
-                )
-                self.outbound_trunk_id = new_trunk.get("trunk_id")
-            
-            self.number_to_call_from = self.sip_number
+            await self._handle_explicit_trunk_id(trunk)
+        elif self.sip_address is not None:
+            await self._handle_sip_address(trunk)
 
         # Propagate resolved trunk and agent number into metadata for downstream consumers
         if self.outbound_trunk_id:
@@ -152,6 +122,35 @@ class Call:
 
         if not self.outbound_trunk_id:
             raise ValueError("No SIP outbound trunk configured. Provide 'sip_trunk_id' or 'sip_trunk_setup'.")
+
+    async def _handle_explicit_trunk_id(self, trunk: Trunk):
+        self.outbound_trunk_id = self.sip_trunk_id
+        if not self.number_to_call_from:
+            try:
+                trunk_info = await trunk.get_trunk_by_id(self.sip_trunk_id)
+                self.number_to_call_from = trunk_info.get("sip_number", self.number_to_call_from)
+            except Exception as e:
+                logger.error("Failed to infer from-number from trunk %s: %s", self.sip_trunk_id, e)
+
+    async def _handle_sip_address(self, trunk: Trunk):
+        trunk_id = await trunk.get_trunk(
+            sip_address=self.sip_address,
+            sip_number=self.sip_number,
+            sip_username=self.sip_username
+        )
+        if trunk_id and trunk_id.get("trunk_id") is not None:
+            self.outbound_trunk_id = trunk_id["trunk_id"]
+        else:
+            new_trunk = await trunk.create_trunk(
+                name=self.sip_name,
+                sip_address=self.sip_address,
+                sip_number=self.sip_number,
+                sip_username=self.sip_username,
+                sip_password=self.sip_password
+            )
+            self.outbound_trunk_id = new_trunk.get("trunk_id")
+        
+        self.number_to_call_from = self.sip_number
 
     async def start_call(self):
         """Resolve trunk configuration and place the outbound call.

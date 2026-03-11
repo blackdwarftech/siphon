@@ -65,17 +65,7 @@ class ConversationSummarizer:
 
     async def summarize(self, conversation_history: List[Dict[str, Any]]) -> SummaryResult:
         """Generate a summary of the conversation."""
-        if not conversation_history:
-            logger.warning("No conversation history provided for summarization")
-            return SummaryResult(success=True)
-
-        has_user_content = any(
-            msg.get('role') == 'user' and msg.get('content', '').strip()
-            for msg in conversation_history
-        )
-        
-        if not has_user_content:
-            logger.debug("No user responses found, skipping summarization")
+        if not self._is_valid_history(conversation_history):
             return SummaryResult(success=True)
 
         conversation_text = self._format_conversation(conversation_history)
@@ -89,23 +79,7 @@ class ConversationSummarizer:
             logger.debug("Generating conversation summary")
             summary_text = await self._generate(prompt)
             
-            if not summary_text:
-                logger.warning("LLM returned empty summary")
-                return SummaryResult(
-                    success=False,
-                    error_message="Empty summary from LLM"
-                )
-
-            if len(summary_text) > self.max_length:
-                summary_text = summary_text[:self.max_length-3] + "..."
-                logger.debug(f"Summary truncated to {self.max_length} characters")
-
-            logger.info(f"Successfully generated summary: {summary_text[:80]}...")
-            return SummaryResult(
-                summary=summary_text,
-                raw_response=summary_text,
-                success=True
-            )
+            return self._process_summary_result(summary_text)
 
         except Exception as e:
             logger.error(f"Error generating summary: {e}")
@@ -113,6 +87,41 @@ class ConversationSummarizer:
                 success=False,
                 error_message=str(e)
             )
+
+    def _is_valid_history(self, conversation_history: List[Dict[str, Any]]) -> bool:
+        if not conversation_history:
+            logger.warning("No conversation history provided for summarization")
+            return False
+
+        has_user_content = any(
+            msg.get('role') == 'user' and msg.get('content', '').strip()
+            for msg in conversation_history
+        )
+        
+        if not has_user_content:
+            logger.debug("No user responses found, skipping summarization")
+            return False
+            
+        return True
+
+    def _process_summary_result(self, summary_text: Optional[str]) -> SummaryResult:
+        if not summary_text:
+            logger.warning("LLM returned empty summary")
+            return SummaryResult(
+                success=False,
+                error_message="Empty summary from LLM"
+            )
+
+        if len(summary_text) > self.max_length:
+            summary_text = summary_text[:self.max_length-3] + "..."
+            logger.debug(f"Summary truncated to {self.max_length} characters")
+
+        logger.info(f"Successfully generated summary: {summary_text[:80]}...")
+        return SummaryResult(
+            summary=summary_text,
+            raw_response=summary_text,
+            success=True
+        )
 
     async def extract_profile(self, conversation_history: List[Dict[str, Any]]) -> ProfileResult:
         """Extract caller identity from conversation.
@@ -135,41 +144,40 @@ class ConversationSummarizer:
             return ProfileResult(success=True)
 
         try:
-            prompt = PROFILE_EXTRACTION_PROMPT.format(conversation_text=conversation_text)
-            raw = await self._generate(prompt)
-            
-            if not raw:
-                return ProfileResult(success=True)
-
-            profile = self._parse_profile(raw)
-            if profile:
-                logger.info(f"Extracted caller profile: name={profile.name}, email={profile.email}")
-            return ProfileResult(profile=profile, success=True)
+            return await self._do_profile_extraction(conversation_text)
 
         except Exception as e:
             logger.error(f"Error extracting profile: {e}")
             return ProfileResult(success=False, error_message=str(e))
 
+    async def _do_profile_extraction(self, conversation_text: str) -> ProfileResult:
+        prompt = PROFILE_EXTRACTION_PROMPT.format(conversation_text=conversation_text)
+        raw = await self._generate(prompt)
+        
+        if not raw:
+            return ProfileResult(success=True)
+
+        profile = self._parse_profile(raw)
+        if profile:
+            logger.info(f"Extracted caller profile: name={profile.name}, email={profile.email}")
+        return ProfileResult(profile=profile, success=True)
+
+    def _extract_profile_field(self, line: str, prefix: str) -> Optional[str]:
+        if line.upper().startswith(prefix):
+            val = line.split(":", 1)[1].strip()
+            if val and val.upper() != "UNKNOWN":
+                return val
+        return None
+
     def _parse_profile(self, raw: str) -> Optional[CallerProfile]:
         """Parse the structured profile extraction response."""
-        name = None
-        email = None
-        preferences = None
-
+        name = email = preferences = None
+        
         for line in raw.strip().split("\n"):
             line = line.strip()
-            if line.upper().startswith("NAME:"):
-                val = line.split(":", 1)[1].strip()
-                if val and val.upper() != "UNKNOWN":
-                    name = val
-            elif line.upper().startswith("EMAIL:"):
-                val = line.split(":", 1)[1].strip()
-                if val and val.upper() != "UNKNOWN":
-                    email = val
-            elif line.upper().startswith("PREFERENCES:"):
-                val = line.split(":", 1)[1].strip()
-                if val and val.upper() != "UNKNOWN":
-                    preferences = val
+            name = name or self._extract_profile_field(line, "NAME:")
+            email = email or self._extract_profile_field(line, "EMAIL:")
+            preferences = preferences or self._extract_profile_field(line, "PREFERENCES:")
 
         if not any([name, email, preferences]):
             return None

@@ -1,6 +1,6 @@
 from typing import Dict, Any
 
-async def get_tts_component(tts_config: Dict[str, Any]) -> Any:
+def get_tts_component(tts_config: Dict[str, Any]) -> Any:
     provider = tts_config.get("provider")
 
     if provider == "cartesia":

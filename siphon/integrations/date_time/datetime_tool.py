@@ -10,6 +10,7 @@ class DateTime:
     """Provides current date and time information to the agent."""
     
     def __init__(self) -> None:
+        """Initialize the DateTime tool wrapper."""
         pass
 
     @function_tool()

@@ -1,7 +1,7 @@
 """Memory Service - orchestrates storage, summarization, and enrichment."""
 
 from typing import Any, Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from siphon.memory.models import CallerMemory, CallerProfile, ConversationSummary, SummaryResult
 from siphon.memory.storage import MemoryStore, create_memory_store
 from siphon.memory.extraction.summarizer import ConversationSummarizer
@@ -123,67 +123,16 @@ class MemoryService:
             return False
 
         try:
-            # Load existing memory (bypass cache to get latest)
-            logger.debug(f"Loading existing memory for {phone}")
-            existing = await self._store.get(phone)
-            if not existing:
-                logger.debug(f"No existing memory found for {phone}, creating new")
-                existing = CallerMemory(phone_number=phone)
-            else:
-                logger.debug(f"Found existing memory with {existing.total_calls} calls and {len(existing.summaries)} summaries")
-
-            # Generate summary and extract profile in parallel
-            new_summary: Optional[ConversationSummary] = None
-            new_profile: Optional[CallerProfile] = None
-
-            if conversation_history and llm:
-                summarizer = ConversationSummarizer(llm=llm)
-
-                # Generate summary
-                new_summary = await self._generate_summary(
-                    summarizer, conversation_history, existing.total_calls + 1
-                )
-
-                # Extract caller profile
-                new_profile = await self._extract_profile(
-                    summarizer, conversation_history, phone
-                )
-
-            # Build updated memory
-            now = datetime.utcnow()
-            new_call_count = existing.total_calls + 1
-            
-            # Merge summaries
-            updated_summaries = list(existing.summaries)
-            if new_summary:
-                updated_summaries.append(new_summary)
-
-            # Merge caller profile
-            merged_profile = existing.caller_profile
-            if new_profile:
-                if merged_profile:
-                    merged_profile = merged_profile.merge(new_profile)
-                else:
-                    merged_profile = new_profile
-            # Always ensure phone is set on the profile
-            if merged_profile:
-                if not merged_profile.phone:
-                    merged_profile.phone = phone
-            else:
-                merged_profile = CallerProfile(phone=phone)
-
-            memory = CallerMemory(
-                phone_number=phone,
-                first_call_date=existing.first_call_date,
-                last_call_date=now,
-                total_calls=new_call_count,
-                summaries=updated_summaries,
-                caller_profile=merged_profile,
+            existing = await self._get_existing_memory(phone)
+            new_summary, new_profile = await self._generate_summary_and_profile(
+                conversation_history, llm, existing.total_calls + 1, phone
             )
+            
+            memory = self._build_updated_memory(phone, existing, new_summary, new_profile)
 
             # Save to store
             await self._store.save(phone, memory)
-            logger.info(f"Saved memory for {phone}: {memory.total_calls} calls, {len(updated_summaries)} summaries, profile={merged_profile}")
+            logger.info(f"Saved memory for {phone}: {memory.total_calls} calls, {len(memory.summaries)} summaries, profile={memory.caller_profile}")
             
             # Update cache (write-through)
             await self._cache.set_memory(phone, memory.model_dump())
@@ -195,6 +144,71 @@ class MemoryService:
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False
+
+    async def _get_existing_memory(self, phone: str) -> CallerMemory:
+        logger.debug(f"Loading existing memory for {phone}")
+        existing = await self._store.get(phone)
+        if not existing:
+            logger.debug(f"No existing memory found for {phone}, creating new")
+            return CallerMemory(phone_number=phone)
+        logger.debug(f"Found existing memory with {existing.total_calls} calls and {len(existing.summaries)} summaries")
+        return existing
+
+    async def _generate_summary_and_profile(
+        self,
+        conversation_history: Optional[List[Dict[str, Any]]],
+        llm: Optional[Any],
+        call_number: int,
+        phone: str
+    ) -> tuple[Optional[ConversationSummary], Optional[CallerProfile]]:
+        new_summary = None
+        new_profile = None
+        
+        if conversation_history and llm:
+            summarizer = ConversationSummarizer(llm=llm)
+            new_summary = await self._generate_summary(
+                summarizer, conversation_history, call_number
+            )
+            new_profile = await self._extract_profile(
+                summarizer, conversation_history, phone
+            )
+        return new_summary, new_profile
+
+    def _build_updated_memory(
+        self,
+        phone: str,
+        existing: CallerMemory,
+        new_summary: Optional[ConversationSummary],
+        new_profile: Optional[CallerProfile]
+    ) -> CallerMemory:
+        now = datetime.now(timezone.utc)
+        new_call_count = existing.total_calls + 1
+        
+        updated_summaries = list(existing.summaries)
+        if new_summary:
+            updated_summaries.append(new_summary)
+
+        merged_profile = existing.caller_profile
+        if new_profile:
+            if merged_profile:
+                merged_profile = merged_profile.merge(new_profile)
+            else:
+                merged_profile = new_profile
+                
+        if merged_profile:
+            if not merged_profile.phone:
+                merged_profile.phone = phone
+        else:
+            merged_profile = CallerProfile(phone=phone)
+
+        return CallerMemory(
+            phone_number=phone,
+            first_call_date=existing.first_call_date,
+            last_call_date=now,
+            total_calls=new_call_count,
+            summaries=updated_summaries,
+            caller_profile=merged_profile,
+        )
 
     def enhance_instructions(
         self,
@@ -224,7 +238,7 @@ class MemoryService:
             if result.success and result.summary:
                 logger.info(f"Generated summary for call #{call_number}: {result.summary[:80]}...")
                 return ConversationSummary(
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc),
                     summary=result.summary,
                     call_number=call_number
                 )

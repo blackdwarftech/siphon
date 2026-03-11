@@ -13,3 +13,5 @@ requirements.txt
 docs/
 agent.py
 call.py
+.scannerwork
+.pytest_cache

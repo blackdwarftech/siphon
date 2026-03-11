@@ -4,6 +4,8 @@ import os
 from livekit.plugins import groq
 from . import ClientWrapperMixin
 
+ERR_MISSING_API_KEY = "GROQ_API_KEY environment variable is not set"
+
 class LLM(ClientWrapperMixin):
     """Groq-backed LLM wrapper around the LiveKit Groq plugin."""
     def __init__(
@@ -22,7 +24,7 @@ class LLM(ClientWrapperMixin):
         self.parallel_tool_calls = parallel_tool_calls
 
         if not self.api_key:
-            raise ValueError("GROQ_API_KEY environment variable is not set")
+            raise ValueError(ERR_MISSING_API_KEY)
 
         self._client = self._build_client()
 
@@ -73,7 +75,7 @@ class STT(ClientWrapperMixin):
         self.detect_language = detect_language
 
         if not self.api_key:
-            raise ValueError("GROQ_API_KEY environment variable is not set")
+            raise ValueError(ERR_MISSING_API_KEY)
 
         self._client = self._build_client()
 
@@ -121,7 +123,7 @@ class TTS(ClientWrapperMixin):
         self.api_key = api_key
 
         if not self.api_key:
-            raise ValueError("GROQ_API_KEY environment variable is not set")
+            raise ValueError(ERR_MISSING_API_KEY)
 
         self._client = self._build_client()
 

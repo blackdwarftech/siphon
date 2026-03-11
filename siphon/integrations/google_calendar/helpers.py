@@ -112,7 +112,7 @@ def get_default_time_min() -> tuple[str, str]:
 # VALIDATION HELPERS
 # ============================================================================
 
-def check_description_contact_info(description: Optional[str], attendees: Optional[str]) -> Optional[str]:
+def check_description_contact_info(description: Optional[str]) -> Optional[str]:
     """Check if description contains contact info. Returns a warning string if not."""
     if description:
         has_phone = _PHONE_PATTERN.search(description)
@@ -137,7 +137,7 @@ def parse_attendees(attendees: Optional[str]) -> List[Dict[str, str]]:
 # ASYNC REQUEST EXECUTION
 # ============================================================================
 
-async def execute_request_async(request: HttpRequest, timeout: int = REQUEST_TIMEOUT) -> Dict[str, Any]:
+async def execute_request_async(request: HttpRequest) -> Dict[str, Any]:
     """Execute Google API request asynchronously with timeout and retry logic.
     
     Handles:
@@ -151,14 +151,12 @@ async def execute_request_async(request: HttpRequest, timeout: int = REQUEST_TIM
     
     for attempt in range(MAX_RETRIES):
         try:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(calendar_service._executor, request.execute),
-                timeout=timeout
-            )
+            async with asyncio.timeout(REQUEST_TIMEOUT):
+                result = await loop.run_in_executor(calendar_service._executor, request.execute)
             calendar_service.record_success()
             return result if result is not None else {}
-        except asyncio.TimeoutError:
-            last_error = f"Request timed out after {timeout} seconds"
+        except TimeoutError:
+            last_error = f"Request timed out after {REQUEST_TIMEOUT} seconds"
             logger.warning(f"Google API request timed out (attempt {attempt + 1}/{MAX_RETRIES})")
         except HttpError as e:
             if e.resp.status in [429, 500, 502, 503, 504]:
@@ -176,7 +174,7 @@ async def execute_request_async(request: HttpRequest, timeout: int = REQUEST_TIM
             await asyncio.sleep(delay)
     
     calendar_service.record_failure()
-    raise Exception(f"Request failed after {MAX_RETRIES} attempts. Last error: {last_error}")
+    raise RuntimeError(f"Request failed after {MAX_RETRIES} attempts. Last error: {last_error}")
 
 
 # ============================================================================
@@ -256,6 +254,43 @@ def _build_request(service, method: str, body: Dict[str, Any],
         raise ValueError(f"Unknown method: {method}")
 
 
+async def _fallback_without_email(service, method, body, event_id, attendees_raw):
+    """Step 2: Keep attendees in body, but don't send email notifications"""
+    logger.info("Retrying with attendees but without email notifications...")
+    request = _build_request(service, method, body, event_id, send_updates=None)
+    
+    try:
+        response = await execute_request_async(request)
+        logger.info("Event created/updated with attendees (no email notification)")
+        return {
+            "response": response, 
+            "attendee_note": "NOTE: Attendee was added to the event but email notification could not be sent."
+        }
+    except HttpError as e2:
+        logger.warning(f"Step 2 also failed ({e2.resp.status}): {e2.reason}")
+        return await _fallback_remove_attendees(service, method, body, event_id, attendees_raw)
+
+async def _fallback_remove_attendees(service, method, body, event_id, attendees_raw):
+    """Step 3: Last resort — remove attendees, save email in description"""
+    logger.info("Falling back to saving email in description only...")
+    body.pop("attendees", None)
+    
+    if attendees_raw and method == "insert":
+        current_desc = body.get("description", "")
+        if attendees_raw not in (current_desc or ""):
+            body["description"] = (
+                f"{current_desc}\nEmail: {attendees_raw}" 
+                if current_desc else f"Email: {attendees_raw}"
+            )
+    
+    request = _build_request(service, method, body, event_id, send_updates=None)
+    response = await execute_request_async(request)
+    
+    note = "NOTE: Could not add attendee to event (service account limitation)."
+    if attendees_raw:
+        note += f" The email '{attendees_raw}' was saved in the event description."
+    return {"response": response, "attendee_note": note}
+
 async def execute_with_attendee_fallback(
     service,
     method: str,
@@ -287,38 +322,4 @@ async def execute_with_attendee_fallback(
             raise  # Not a 403 attendee issue — propagate
         
         logger.warning(f"403 on sendUpdates='all': {e.reason}")
-        
-        # Step 2: Keep attendees in body, but don't send email notifications
-        # The attendee will still appear on the calendar event
-        logger.info("Retrying with attendees but without email notifications...")
-        request = _build_request(service, method, body, event_id, send_updates=None)
-        
-        try:
-            response = await execute_request_async(request)
-            logger.info("Event created/updated with attendees (no email notification)")
-            return {
-                "response": response, 
-                "attendee_note": "NOTE: Attendee was added to the event but email notification could not be sent."
-            }
-        except HttpError as e2:
-            logger.warning(f"Step 2 also failed ({e2.resp.status}): {e2.reason}")
-            
-            # Step 3: Last resort — remove attendees, save email in description
-            logger.info("Falling back to saving email in description only...")
-            body.pop("attendees", None)
-            
-            if attendees_raw and method == "insert":
-                current_desc = body.get("description", "")
-                if attendees_raw not in (current_desc or ""):
-                    body["description"] = (
-                        f"{current_desc}\nEmail: {attendees_raw}" 
-                        if current_desc else f"Email: {attendees_raw}"
-                    )
-            
-            request = _build_request(service, method, body, event_id, send_updates=None)
-            response = await execute_request_async(request)
-            
-            note = "NOTE: Could not add attendee to event (service account limitation)."
-            if attendees_raw:
-                note += f" The email '{attendees_raw}' was saved in the event description."
-            return {"response": response, "attendee_note": note}
+        return await _fallback_without_email(service, method, body, event_id, attendees_raw)
