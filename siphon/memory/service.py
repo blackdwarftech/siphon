@@ -6,7 +6,6 @@ from siphon.memory.models import CallerMemory, CallerProfile, ConversationSummar
 from siphon.memory.storage import MemoryStore, create_memory_store
 from siphon.memory.extraction.summarizer import ConversationSummarizer
 from siphon.memory.enrichment import MemoryEnricher
-from siphon.cache import get_cache_service
 from siphon.config import get_logger
 
 logger = get_logger("calling-agent")
@@ -20,7 +19,6 @@ class MemoryService:
     - Summarization (generating summaries from conversations)
     - Profile extraction (structured caller identity)
     - Enrichment (formatting memory for prompts)
-    - Caching (Redis cache layer for fast lookups)
     """
 
     def __init__(
@@ -43,7 +41,6 @@ class MemoryService:
         self._store = store or create_memory_store()
         self._enricher = enricher or MemoryEnricher()
         self._loaded_memory: Optional[CallerMemory] = None
-        self._cache = get_cache_service()
 
     @property
     def is_enabled(self) -> bool:
@@ -62,10 +59,7 @@ class MemoryService:
     async def load(self, phone_number: Optional[str] = None) -> Optional[CallerMemory]:
         """Load memory for a phone number.
         
-        Uses cache-aside pattern:
-        1. Check cache first
-        2. If cache miss, load from database
-        3. Update cache on successful load
+        Loads memory from the database.
         """
         if not self._enabled:
             return None
@@ -76,23 +70,10 @@ class MemoryService:
             return None
 
         try:
-            # Try cache first
-            cached_data = await self._cache.get_memory(phone)
-            if cached_data:
-                memory = CallerMemory.model_validate(cached_data)
-                self._loaded_memory = memory
-                logger.info(f"Loaded memory from cache for {phone}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
-                return memory
-            
-            # Cache miss - load from store
             memory = await self._store.get(phone)
             if memory:
                 self._loaded_memory = memory
                 logger.info(f"Loaded memory for {phone}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
-                
-                # Update cache
-                await self._cache.set_memory(phone, memory.model_dump())
-                
                 return memory
             return None
         except Exception as e:
@@ -107,11 +88,9 @@ class MemoryService:
     ) -> bool:
         """Save memory after a call.
         
-        Uses write-through pattern:
         1. Generate summary from conversation
         2. Extract caller profile
         3. Save to database
-        4. Update cache
         """
         if not self._enabled:
             logger.debug("Memory service not enabled, skipping save")
@@ -133,9 +112,6 @@ class MemoryService:
             # Save to store
             await self._store.save(phone, memory)
             logger.info(f"Saved memory for {phone}: {memory.total_calls} calls, {len(memory.summaries)} summaries, profile={memory.caller_profile}")
-            
-            # Update cache (write-through)
-            await self._cache.set_memory(phone, memory.model_dump())
             
             return True
 
@@ -269,11 +245,3 @@ class MemoryService:
         except Exception as e:
             logger.error(f"Error extracting profile: {e}")
             return None
-    
-    async def invalidate_cache(self, phone_number: Optional[str] = None) -> bool:
-        """Invalidate cached memory for a phone number."""
-        phone = phone_number or self._phone_number
-        if not phone:
-            return False
-        
-        return await self._cache.invalidate_memory(phone)

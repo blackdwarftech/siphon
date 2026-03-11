@@ -1,7 +1,7 @@
-from livekit.agents import JobContext
+from livekit.agents import JobContext, room_io
+from livekit import rtc
 from livekit.agents.voice import AgentSession
-from livekit.plugins import silero
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.plugins import silero, noise_cancellation
 from .voice_agent import AgentSetup
 import json
 import asyncio
@@ -217,14 +217,13 @@ def _build_agent_session(
         activation_threshold=activation_threshold,
         prefix_padding_duration=prefix_padding_duration,
     )
-    turn_detector = MultilingualModel()
 
     return AgentSession(
         llm=session_llm,
         tts=session_tts,
         stt=session_stt,
         vad=vad_instance,
-        turn_detection=turn_detector,
+        turn_detection="stt",
         allow_interruptions=allow_interruptions,
         min_endpointing_delay=min_endpointing_delay,
         max_endpointing_delay=max_endpointing_delay,
@@ -330,12 +329,12 @@ async def entrypoint(
     greeting_instructions = kwargs.get("greeting_instructions", "Greet and introduce yourself briefly")
     system_instructions = kwargs.get("system_instructions", "You are a helpful voice assistant")
     allow_interruptions = kwargs.get("allow_interruptions", True)
-    min_silence_duration = kwargs.get("min_silence_duration", 2.0)
-    activation_threshold = kwargs.get("activation_threshold", 0.4)
-    prefix_padding_duration = kwargs.get("prefix_padding_duration", 0.5)
-    min_endpointing_delay = kwargs.get("min_endpointing_delay", 0.45)
-    max_endpointing_delay = kwargs.get("max_endpointing_delay", 3.0)
-    min_interruption_duration = kwargs.get("min_interruption_duration", 0.08)
+    min_silence_duration = kwargs.get("min_silence_duration", 0.25)
+    activation_threshold = kwargs.get("activation_threshold", 0.25)
+    prefix_padding_duration = kwargs.get("prefix_padding_duration", 1.0)
+    min_endpointing_delay = kwargs.get("min_endpointing_delay", 0.25)
+    max_endpointing_delay = kwargs.get("max_endpointing_delay", 1.5)
+    min_interruption_duration = kwargs.get("min_interruption_duration", 0.05)
     tools = kwargs.get("tools", None)
     google_calendar = kwargs.get("google_calendar", False)
     date_time = kwargs.get("date_time", True)
@@ -414,6 +413,13 @@ async def entrypoint(
         await session.start(
             room=ctx.room,
             agent=agent_setup,
+            room_options=room_io.RoomOptions(
+                audio_input=room_io.AudioInputOptions(
+                    noise_cancellation=lambda params: noise_cancellation.BVCTelephony() 
+                    if params.participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP 
+                    else noise_cancellation.BVC(),
+                ),
+            ),
         )
         logger.info("Agent session started successfully.")
 
