@@ -4,6 +4,8 @@ import os
 from livekit.plugins import openai
 from . import ClientWrapperMixin
 
+ERR_MISSING_API_KEY = "OPENAI_API_KEY environment variable is not set"
+
 class LLM(ClientWrapperMixin):
     """OpenAI-backed LLM wrapper around the LiveKit OpenAI plugin."""
     def __init__(
@@ -28,7 +30,7 @@ class LLM(ClientWrapperMixin):
         self.timeout = timeout
 
         if not self.api_key:
-            raise ValueError("OPENAI_API_KEY environment variable is not set")
+            raise ValueError(ERR_MISSING_API_KEY)
 
         self._client = self._build_client()
 
@@ -88,7 +90,7 @@ class STT(ClientWrapperMixin):
         self.use_realtime = use_realtime
 
         if not self.api_key:
-            raise ValueError("OPENAI_API_KEY environment variable is not set")
+            raise ValueError(ERR_MISSING_API_KEY)
 
         self._client = self._build_client()
 
@@ -140,7 +142,7 @@ class TTS(ClientWrapperMixin):
         self.api_key = api_key
 
         if not self.api_key:
-            raise ValueError("OPENAI_API_KEY environment variable is not set")
+            raise ValueError(ERR_MISSING_API_KEY)
 
         self._client = self._build_client()
 
@@ -185,7 +187,7 @@ class Realtime(ClientWrapperMixin):
         self.temperature = temperature
 
         if not self.api_key:
-            raise ValueError("OPENAI_API_KEY environment variable is not set")
+            raise ValueError(ERR_MISSING_API_KEY)
 
         self._client = self._build_client()
 

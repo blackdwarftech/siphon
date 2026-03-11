@@ -1,6 +1,6 @@
 from typing import Dict, Any
 
-async def get_llm_component(llm_config: Dict[str, Any]) -> Any:
+def get_llm_component(llm_config: Dict[str, Any]) -> Any:
     provider = llm_config.get("provider")
     
     if provider == "gemini":

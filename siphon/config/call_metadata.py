@@ -112,7 +112,7 @@ class CallMetadata:
         
         return metadata
 
-    async def _set_timing_metadata(self, metadata: dict, start_time: float = None, end_time: float = None) -> None:
+    def _set_timing_metadata(self, metadata: dict, start_time: float = None, end_time: float = None) -> None:
         """Set timing-related metadata, including formatted timestamps."""
         if start_time is None:
             start_time = time.time()
@@ -124,7 +124,7 @@ class CallMetadata:
         metadata['duration'] = end_time - start_time
         metadata['timezone'] = get_timezone_name() or "local"
 
-    def _determine_call_status(self, response, duration: float) -> tuple:
+    def _determine_call_status(self, response) -> tuple:
         """Determine call status and termination reason"""
         if not response:
             has_conversation = hasattr(self, 'conversation_history') and len(self.conversation_history) > 0
@@ -186,7 +186,7 @@ class CallMetadata:
             
             # Set timing for unanswered call
             current_time = time.time()
-            await self._set_timing_metadata(metadata, current_time, current_time)
+            self._set_timing_metadata(metadata, current_time, current_time)
             metadata['duration'] = 0
             
             # Set status and termination reason
@@ -237,10 +237,10 @@ class CallMetadata:
                 end_timestamp = response.ended_at / 1e9 if hasattr(response, 'ended_at') and response.ended_at else time.time()
                 
                 # Set timing metadata
-                await self._set_timing_metadata(metadata, start_timestamp, end_timestamp)
+                self._set_timing_metadata(metadata, start_timestamp, end_timestamp)
                 
                 # Determine status and termination reason
-                status = self._determine_call_status(response, metadata['duration'])
+                status = self._determine_call_status(response)
                 metadata['status'] = status
                 # Call reached a state where recording response exists -> treat as answered
                 metadata['answered'] = True
@@ -253,13 +253,10 @@ class CallMetadata:
                 current_time = time.time()
                 start_timestamp = getattr(self, 'call_start_time', current_time)
 
-                await self._set_timing_metadata(metadata, start_timestamp, current_time)
+                self._set_timing_metadata(metadata, start_timestamp, current_time)
                 
                 # Determine status for no-response scenario using the actual duration
-                status = self._determine_call_status(
-                    response,
-                    metadata['duration'],
-                )
+                status = self._determine_call_status(response)
                 metadata['status'] = status
                 metadata['recording_filename'] = ''
 

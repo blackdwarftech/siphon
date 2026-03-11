@@ -14,20 +14,7 @@ class Agent:
         llm: Optional[Dict[str, Any]] = None,
         stt: Optional[Dict[str, Any]] = None,
         tts: Optional[Dict[str, Any]] = None,
-        send_greeting: Optional[bool] = True,
-        greeting_instructions: Optional[str] = "Greet and introduce yourself briefly",
-        system_instructions: Optional[str] = "You are a helpful voice assistant",
-        allow_interruptions: Optional[bool] = True,
-        min_silence_duration: Optional[float] = 2.0,
-        activation_threshold: Optional[float] = 0.4,
-        prefix_padding_duration: Optional[float] = 0.5,
-        min_endpointing_delay: Optional[float] = 0.45,
-        max_endpointing_delay: Optional[float] = 3.0,
-        min_interruption_duration: Optional[float] = 0.08,
-        tools: Optional[list[Any]] = None,
-        google_calendar: Optional[bool] = False,
-        date_time: Optional[bool] = True,
-        remember_call: Optional[bool] = False,
+        **kwargs: Any
     ) -> None:
         self._default_agent_name = agent_name
 
@@ -35,43 +22,14 @@ class Agent:
         self.tts = tts
         self.stt = stt
 
-        self.send_greeting = send_greeting
-        self.greeting_instructions = greeting_instructions
-        self.system_instructions = system_instructions
-
-        self.allow_interruptions = allow_interruptions
-
-        self.min_silence_duration = min_silence_duration
-        self.activation_threshold = activation_threshold
-        self.prefix_padding_duration = prefix_padding_duration
-        self.min_endpointing_delay = min_endpointing_delay
-        self.max_endpointing_delay = max_endpointing_delay
-        self.min_interruption_duration = min_interruption_duration
-        
-        self.tools = tools or []
-        self.google_calendar = google_calendar
-        self.date_time = date_time
-        self.remember_call = remember_call
+        self.entrypoint_kwargs = kwargs
 
         self.entrypoint = partial(
             entrypoint,
             llm=self.llm,
             tts=self.tts,
             stt=self.stt,
-            send_greeting=self.send_greeting,
-            greeting_instructions=self.greeting_instructions,
-            system_instructions=self.system_instructions,
-            allow_interruptions=self.allow_interruptions,
-            min_silence_duration=self.min_silence_duration,
-            activation_threshold=self.activation_threshold,
-            prefix_padding_duration=self.prefix_padding_duration,
-            min_endpointing_delay=self.min_endpointing_delay,
-            max_endpointing_delay=self.max_endpointing_delay,
-            min_interruption_duration=self.min_interruption_duration,
-            tools=self.tools,
-            google_calendar=self.google_calendar,
-            date_time=self.date_time,
-            remember_call=self.remember_call,
+            **self.entrypoint_kwargs
         )
 
     def _run(self, agent_name: Optional[str], mode: str, force_download: bool = False) -> None:

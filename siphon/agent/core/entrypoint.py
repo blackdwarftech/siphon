@@ -19,48 +19,54 @@ async def monitor_call(ctx: JobContext, agent: AgentSetup):
     logger.info("Starting SIP call status monitoring...")
 
     monitoring_span = None
-
-    # Wait for SIP participant to join or timeout
     timeout_seconds = 30
     start_time = asyncio.get_event_loop().time()
 
     try:
         while True:
             current_time = asyncio.get_event_loop().time()
-            elapsed = current_time - start_time
-
-            # Check if timeout reached
-            if elapsed > timeout_seconds:
+            if (current_time - start_time) > timeout_seconds:
                 await agent.handle_unanswered_call()
                 return False
             
-            # Check for SIP participants
-            if ctx.room.remote_participants:
-                for participant in ctx.room.remote_participants.values():
-                    sip_status = participant.attributes.get("sip.callStatus")
-
-                    if sip_status == "active":
-                        # Update inbound numbers when we first see an active SIP participant
-                        attrs = getattr(participant, "attributes", {}) or {}
-                        caller_number = attrs.get("sip.phoneNumber") or participant.identity
-
-                        if hasattr(agent, 'update_inbound_phone_numbers'):
-                            agent.update_inbound_phone_numbers(caller_number)
-                        
-                        # Update phone number for call memory if enabled
-                        if hasattr(agent, 'update_phone_number') and caller_number:
-                            agent.update_phone_number(caller_number)
-                            logger.info(f"Updated call memory phone number from SIP: {caller_number}")
-
-                        return True
-                    elif sip_status == "hangup":
-                        await agent.handle_unanswered_call()
-                        return False
+            sip_status_result = _check_sip_status(ctx, agent)
+            if sip_status_result is not None:
+                if sip_status_result is False:
+                    await agent.handle_unanswered_call()
+                return sip_status_result
 
             await asyncio.sleep(0.1)  
     finally:
         if monitoring_span:
             monitoring_span.end()
+
+
+def _check_sip_status(ctx: JobContext, agent: AgentSetup) -> Optional[bool]:
+    if not ctx.room.remote_participants:
+        return None
+        
+    for participant in ctx.room.remote_participants.values():
+        sip_status = participant.attributes.get("sip.callStatus")
+
+        if sip_status == "active":
+            _handle_active_sip(participant, agent)
+            return True
+        elif sip_status == "hangup":
+            return False
+            
+    return None
+
+
+def _handle_active_sip(participant, agent: AgentSetup) -> None:
+    attrs = getattr(participant, "attributes", {}) or {}
+    caller_number = attrs.get("sip.phoneNumber") or participant.identity
+
+    if hasattr(agent, 'update_inbound_phone_numbers'):
+        agent.update_inbound_phone_numbers(caller_number)
+    
+    if hasattr(agent, 'update_phone_number') and caller_number:
+        agent.update_phone_number(caller_number)
+        logger.info(f"Updated call memory phone number from SIP: {caller_number}")
 
 
 def _load_metadata(ctx: JobContext) -> Optional[Dict[str, Any]]:
@@ -76,7 +82,7 @@ def _load_metadata(ctx: JobContext) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def _derive_agent_config(
+def _derive_agent_config(
     metadata: Dict[str, Any],
     llm: Optional[Dict[str, Any]],
     stt: Optional[Dict[str, Any]],
@@ -98,15 +104,15 @@ async def _derive_agent_config(
 
         if agent_config.get("llm"):
             llm_cfg = agent_config.get("llm")
-            llm = await get_llm_component(llm_cfg)
+            llm = get_llm_component(llm_cfg)
 
         if agent_config.get("tts"):
             tts_cfg = agent_config.get("tts")
-            tts = await get_tts_component(tts_cfg)
+            tts = get_tts_component(tts_cfg)
 
         if agent_config.get("stt"):
             stt_cfg = agent_config.get("stt")
-            stt = await get_stt_component(stt_cfg)
+            stt = get_stt_component(stt_cfg)
 
         if agent_config.get("greeting_instructions"):
             greeting_instructions = agent_config.get(
@@ -138,14 +144,13 @@ async def _derive_agent_config(
     )
 
 
-def _build_agent_class(tools: Optional[List[Any]], google_calendar: bool = False, date_time: bool = True, remember_call: bool = False) -> type:
+def _build_agent_class(tools: Optional[List[Any]], google_calendar: bool = False, date_time: bool = True) -> type:
     """Compose AgentSetup with any user-provided tool mixins and optional integrations.
     
     Args:
         tools: User-provided tool classes/mixins
         google_calendar: Whether to include GoogleCalendar integration
         date_time: Whether to include DateTime integration
-        remember_call: Deprecated, kept for API compatibility. Memory is now handled via MemoryService.
     
     Returns:
         Dynamically constructed agent class with appropriate mixins
@@ -228,25 +233,91 @@ def _build_agent_session(
     )
 
 
+async def _setup_memory_and_agent(
+    agent_cls,
+    metadata,
+    is_inbound_call,
+    remember_call,
+    system_instructions,
+    google_calendar,
+    date_time,
+    send_greeting,
+    greeting_instructions,
+    allow_interruptions,
+    room,
+):
+    # Extract phone number from metadata for call memory
+    phone_number = None
+    if remember_call:
+        # Try to get phone number from metadata
+        if is_inbound_call:
+            # For inbound, we'll get it from SIP participant later
+            phone_number = metadata.get("user_number") or metadata.get("agent_number")
+        else:
+            # For outbound, it's the number we called
+            phone_number = metadata.get("number_to_call") or metadata.get("user_number")
+        
+        logger.info(f"Call memory enabled. Phone number from metadata: {phone_number}")
+
+    # Initialize MemoryService for call memory
+    memory_service = None
+    enhanced_instructions = system_instructions
+    if remember_call:
+        from siphon.memory import MemoryService
+        memory_service = MemoryService(
+            phone_number=phone_number,
+            enabled=remember_call
+        )
+        
+        if phone_number:
+            loaded_memory = await memory_service.load(phone_number)
+            if loaded_memory:
+                logger.info(f"Loaded memory for {phone_number}: total_calls={loaded_memory.total_calls}, summaries={len(loaded_memory.summaries)}")
+                enhanced_instructions = memory_service.enhance_instructions(
+                    system_instructions, loaded_memory
+                )
+            else:
+                logger.info(f"No previous call memory found for {phone_number}")
+    
+    # Inject calendar operation guidelines if Google Calendar integration is enabled
+    if google_calendar:
+        from siphon.agent.internal_prompts import calendar_guidelines_prompt
+        enhanced_instructions = enhanced_instructions + "\n\n" + calendar_guidelines_prompt
+        logger.info("Injected calendar operation guidelines into system instructions")
+    
+    agent_setup = agent_cls(
+        config=metadata,
+        send_greeting=send_greeting,
+        greeting_instructions=greeting_instructions,
+        system_instructions=enhanced_instructions,
+        interruptions_allowed=allow_interruptions,
+        room=room,
+        phone_number=phone_number,
+        remember_call=remember_call,
+        memory_service=memory_service,
+    )
+    
+    # Initialize DateTime if it's in the class hierarchy and enabled
+    if date_time and hasattr(agent_setup, '__class__'):
+        from siphon.integrations import DateTime
+        if DateTime in agent_setup.__class__.__mro__:
+            DateTime.__init__(agent_setup)
+    
+    # Initialize GoogleCalendar if it's in the class hierarchy
+    if google_calendar and hasattr(agent_setup, '__class__'):
+        from siphon.integrations import GoogleCalendar
+        if GoogleCalendar in agent_setup.__class__.__mro__:
+            GoogleCalendar.__init__(agent_setup)
+
+    return agent_setup, memory_service
+
+
 async def entrypoint(
     ctx: JobContext, 
     llm: Optional[Dict[str, Any]] = None,
     stt: Optional[Dict[str, Any]] = None,
     tts: Optional[Dict[str, Any]] = None,
-    send_greeting: Optional[bool] = True,
-    greeting_instructions: Optional[str] = "Greet and introduce yourself briefly",
-    system_instructions: Optional[str] = "You are a helpful voice assistant",
-    allow_interruptions: Optional[bool] = True,
-    min_silence_duration: Optional[float] = 2.0,  
-    activation_threshold: Optional[float] = 0.4,  
-    prefix_padding_duration: Optional[float] = 0.5,
-    min_endpointing_delay: Optional[float] = 0.45,
-    max_endpointing_delay: Optional[float] = 3.0,
-    min_interruption_duration: Optional[float] = 0.08,
-    tools: Optional[List[Any]] = None,
-    google_calendar: Optional[bool] = False,
-    date_time: Optional[bool] = True,
-    remember_call: Optional[bool] = False,
+    **kwargs: Any
 ): 
     """LiveKit worker entrypoint for voice agents.
 
@@ -255,6 +326,21 @@ async def entrypoint(
     reconstructs the LLM/STT/TTS components from config, and starts an
     AgentSession bound to the current room.
     """
+    send_greeting = kwargs.get("send_greeting", True)
+    greeting_instructions = kwargs.get("greeting_instructions", "Greet and introduce yourself briefly")
+    system_instructions = kwargs.get("system_instructions", "You are a helpful voice assistant")
+    allow_interruptions = kwargs.get("allow_interruptions", True)
+    min_silence_duration = kwargs.get("min_silence_duration", 2.0)
+    activation_threshold = kwargs.get("activation_threshold", 0.4)
+    prefix_padding_duration = kwargs.get("prefix_padding_duration", 0.5)
+    min_endpointing_delay = kwargs.get("min_endpointing_delay", 0.45)
+    max_endpointing_delay = kwargs.get("max_endpointing_delay", 3.0)
+    min_interruption_duration = kwargs.get("min_interruption_duration", 0.08)
+    tools = kwargs.get("tools", None)
+    google_calendar = kwargs.get("google_calendar", False)
+    date_time = kwargs.get("date_time", True)
+    remember_call = kwargs.get("remember_call", False)
+
     agent_setup: Optional[AgentSetup] = None
     try:
         metadata = _load_metadata(ctx)
@@ -269,7 +355,7 @@ async def entrypoint(
             tts,
             greeting_instructions,
             system_instructions,
-        ) = await _derive_agent_config(
+        ) = _derive_agent_config(
             metadata,
             llm,
             stt,
@@ -278,70 +364,21 @@ async def entrypoint(
             system_instructions,
         )
 
-        agent_cls = _build_agent_class(tools, google_calendar=google_calendar, date_time=date_time, remember_call=remember_call)
+        agent_cls = _build_agent_class(tools, google_calendar=google_calendar, date_time=date_time)
 
-        # Extract phone number from metadata for call memory
-        phone_number = None
-        if remember_call:
-            # Try to get phone number from metadata
-            if is_inbound_call:
-                # For inbound, we'll get it from SIP participant later
-                phone_number = metadata.get("user_number") or metadata.get("agent_number")
-            else:
-                # For outbound, it's the number we called
-                phone_number = metadata.get("number_to_call") or metadata.get("user_number")
-            
-            logger.info(f"Call memory enabled. Phone number from metadata: {phone_number}")
-
-        # Initialize MemoryService for call memory (new service-based approach)
-        memory_service = None
-        enhanced_instructions = system_instructions
-        if remember_call:
-            from siphon.memory import MemoryService
-            memory_service = MemoryService(
-                phone_number=phone_number,
-                enabled=remember_call
-            )
-            
-            if phone_number:
-                loaded_memory = await memory_service.load(phone_number)
-                if loaded_memory:
-                    logger.info(f"Loaded memory for {phone_number}: total_calls={loaded_memory.total_calls}, summaries={len(loaded_memory.summaries)}")
-                    enhanced_instructions = memory_service.enhance_instructions(
-                        system_instructions, loaded_memory
-                    )
-                else:
-                    logger.info(f"No previous call memory found for {phone_number}")
-        
-        # Inject calendar operation guidelines if Google Calendar integration is enabled
-        if google_calendar:
-            from siphon.agent.internal_prompts import calendar_guidelines_prompt
-            enhanced_instructions = enhanced_instructions + "\n\n" + calendar_guidelines_prompt
-            logger.info("Injected calendar operation guidelines into system instructions")
-        
-        agent_setup = agent_cls(
-            config=metadata,
-            send_greeting=send_greeting,
-            greeting_instructions=greeting_instructions,
-            system_instructions=enhanced_instructions,
-            interruptions_allowed=allow_interruptions,
-            room=ctx.room,
-            phone_number=phone_number,
-            remember_call=remember_call,
-            memory_service=memory_service,
+        agent_setup, _ = await _setup_memory_and_agent(
+            agent_cls,
+            metadata,
+            is_inbound_call,
+            remember_call,
+            system_instructions,
+            google_calendar,
+            date_time,
+            send_greeting,
+            greeting_instructions,
+            allow_interruptions,
+            ctx.room,
         )
-        
-        # Initialize DateTime if it's in the class hierarchy and enabled
-        if date_time and hasattr(agent_setup, '__class__'):
-            from siphon.integrations import DateTime
-            if DateTime in agent_setup.__class__.__mro__:
-                DateTime.__init__(agent_setup)
-        
-        # Initialize GoogleCalendar if it's in the class hierarchy
-        if google_calendar and hasattr(agent_setup, '__class__'):
-            from siphon.integrations import GoogleCalendar
-            if GoogleCalendar in agent_setup.__class__.__mro__:
-                GoogleCalendar.__init__(agent_setup)
 
         logger.info("Entrypoint LLM object: %s, Type: %s", llm, type(llm))
         session_llm, session_stt, session_tts = _resolve_session_components(

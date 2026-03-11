@@ -10,8 +10,10 @@ from botocore.config import Config
 from .logging_config import get_logger
 from .timezone_utils import get_timezone
 
-
 logger = get_logger("calling-agent")
+
+MYSQL_PREFIX = "mysql://"
+MYSQL_PYMYSQL_PREFIX = "mysql+pymysql://"
 
 
 class BaseStore:
@@ -46,10 +48,20 @@ class LocalStore(BaseStore):
         os.makedirs(folder, exist_ok=True)
         filename = f"call_{self._kind}_{safe_room_name}_{timestamp}.json"
         path = os.path.join(folder, filename)
-        with open(path, "w", encoding="utf-8") as f:
-            # ensure_ascii=False keeps non-ASCII characters (e.g. Hindi)
-            # as readable text instead of \uXXXX escapes.
-            json.dump(payload, f, indent=4, ensure_ascii=False)
+        path = os.path.join(folder, filename)
+        
+        try:
+            import aiofiles
+            async with aiofiles.open(path, "w", encoding="utf-8") as f:
+                content = json.dumps(payload, indent=4, ensure_ascii=False)
+                await f.write(content)
+        except ImportError:
+            import asyncio
+            def _write_sync():
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=4, ensure_ascii=False)
+            await asyncio.to_thread(_write_sync)
+            
         logger.info(f"Call data saved to {path}")
 
 
@@ -78,7 +90,7 @@ class S3Store(BaseStore):
             os.getenv("AWS_S3_FORCE_PATH_STYLE", "false").lower() == "true"
         )
         if not all([s3_access_key, s3_secret_key, s3_bucket]):
-            raise Exception(
+            raise RuntimeError(
                 "S3/MinIO credentials missing. Set AWS_S3_ACCESS_KEY_ID / MINIO_ACCESS_KEY, "
                 "AWS_S3_SECRET_ACCESS_KEY / MINIO_SECRET_KEY and AWS_S3_BUCKET / MINIO_BUCKET"
             )
@@ -118,12 +130,19 @@ class S3Store(BaseStore):
         # Use ensure_ascii=False so non-ASCII text is stored as UTF-8
         # characters instead of escaped sequences.
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        s3_client.put_object(
-            Bucket=self.config["bucket"],
-            Key=key,
-            Body=body,
-            ContentType="application/json",
-        )
+        
+        put_kwargs = {
+            "Bucket": self.config["bucket"],
+            "Key": key,
+            "Body": body,
+            "ContentType": "application/json",
+        }
+        
+        expected_owner = os.getenv("AWS_S3_EXPECTED_BUCKET_OWNER")
+        if expected_owner:
+            put_kwargs["ExpectedBucketOwner"] = expected_owner
+            
+        s3_client.put_object(**put_kwargs)
         logger.info(
             f"Call data saved to s3://{self.config['bucket']}/{key}"
         )
@@ -192,8 +211,9 @@ class SqlStore(BaseStore):
             ) from exc
         # If user provided a generic MySQL URL (mysql://...), transparently
         # map it to the PyMySQL driver so we don't require the MySQLdb module.
-        if url.startswith("mysql://") and not url.startswith("mysql+pymysql://"):
-            url = "mysql+pymysql://" + url[len("mysql://") :]
+        # map it to the PyMySQL driver so we don't require the MySQLdb module.
+        if url.startswith(MYSQL_PREFIX) and not url.startswith(MYSQL_PYMYSQL_PREFIX):
+            url = MYSQL_PYMYSQL_PREFIX + url[len(MYSQL_PREFIX) :]
 
         self._engine = create_engine(url)
         self._text = text
@@ -234,6 +254,6 @@ def get_data_store(location: Optional[str], kind: str = "metadata") -> BaseStore
         return MongoStore(value, kind=kind)
     if value.startswith("postgres://") or value.startswith("postgresql://"):
         return SqlStore(value, kind=kind)
-    if value.startswith("mysql://") or value.startswith("mysql+pymysql://"):
+    if value.startswith(MYSQL_PREFIX) or value.startswith(MYSQL_PYMYSQL_PREFIX):
         return SqlStore(value, kind=kind)
     return LocalStore(value, kind=kind)

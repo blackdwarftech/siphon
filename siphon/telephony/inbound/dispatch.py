@@ -64,37 +64,10 @@ class Dispatch:
         trunk = Trunk()
         self.inbound_trunk_id = None
 
-        # When an explicit sip_trunk_id is provided (no SIP config object)
         if self.sip_trunk_id is not None:
-            self.inbound_trunk_id = self.sip_trunk_id
-
-            # If the caller did not provide a sip-number, try to infer it
-            # from the trunk configuration itself.
-            if not self.sip_number:
-                try: 
-                    trunk_info = await trunk.get_trunk_by_id(self.sip_trunk_id)
-                    inferred_number = trunk_info.get("sip_number")
-                    if inferred_number:
-                        self.sip_number = inferred_number
-                except Exception as e:
-                    logger.error("Failed to infer from-number from trunk %s: %s", self.sip_trunk_id, e)
-        
-
-        # When sip trunk id is not given but we have a phone number,
-        # either reuse an existing trunk for that number or create one.
-        if self.sip_trunk_id is None and self.sip_number is not None:
-            # get trunk id if exists or create new one
-            trunk_id = await trunk.get_trunk(
-                sip_number=self.sip_number
-            )
-            if trunk_id and trunk_id.get("trunk_id") is not None:
-                self.inbound_trunk_id = trunk_id["trunk_id"]
-            else:
-                new_trunk = await trunk.create_trunk(
-                    name=self.agent_name,
-                    sip_number=self.sip_number,
-                )
-                self.inbound_trunk_id = new_trunk["trunk_id"]
+            await self._handle_explicit_trunk_id(trunk)
+        elif self.sip_number is not None:
+            await self._handle_sip_number(trunk)
             
         # Propagate resolved trunk and agent number into metadata for downstream consumers
         if self.inbound_trunk_id:
@@ -104,6 +77,26 @@ class Dispatch:
 
         if not self.inbound_trunk_id:
             raise ValueError("No SIP inbound trunk configured. Provide 'sip_trunk_id' or 'sip_trunk_setup'.")
+
+    async def _handle_explicit_trunk_id(self, trunk: Trunk):
+        self.inbound_trunk_id = self.sip_trunk_id
+        if not self.sip_number:
+            try: 
+                trunk_info = await trunk.get_trunk_by_id(self.sip_trunk_id)
+                self.sip_number = trunk_info.get("sip_number", self.sip_number)
+            except Exception as e:
+                logger.error("Failed to infer from-number from trunk %s: %s", self.sip_trunk_id, e)
+
+    async def _handle_sip_number(self, trunk: Trunk):
+        trunk_info = await trunk.get_trunk(sip_number=self.sip_number)
+        if trunk_info and trunk_info.get("trunk_id") is not None:
+            self.inbound_trunk_id = trunk_info["trunk_id"]
+        else:
+            new_trunk = await trunk.create_trunk(
+                name=self.agent_name,
+                sip_number=self.sip_number,
+            )
+            self.inbound_trunk_id = new_trunk["trunk_id"]
 
     async def agent_dispatch(self):
         """Resolve trunk configuration and dispatch the inbound agent.
@@ -186,33 +179,10 @@ class Dispatch:
 
             matching_rules = []
 
-            # If dispatch_id provided, find by ID
             if dispatch_id:
-                for rule in dispatch_rules.items or []:
-                    if rule.sip_dispatch_rule_id == dispatch_id:
-                        matching_rules.append({
-                            "dispatch_id": rule.sip_dispatch_rule_id,
-                            "name": getattr(rule, "name", None),
-                            "trunk_ids": getattr(rule, "trunk_ids", []),
-                        })
-            
-            # If sip_number provided, find ALL rules using trunks with this number
+                matching_rules = self._find_rules_by_id(dispatch_rules.items, dispatch_id)
             elif sip_number:
-                # First find the trunk with this number
-                trunk = Trunk()
-                trunk_info = await trunk.get_trunk(sip_number)
-                trunk_id = trunk_info.get("trunk_id")
-
-                if trunk_id:
-                    # Find ALL dispatch rules that use this trunk
-                    for rule in dispatch_rules.items or []:
-                        trunk_ids = getattr(rule, "trunk_ids", []) or []
-                        if trunk_id in trunk_ids:
-                            matching_rules.append({
-                                "dispatch_id": rule.sip_dispatch_rule_id,
-                                "name": getattr(rule, "name", None),
-                                "trunk_ids": trunk_ids,
-                            })
+                matching_rules = await self._find_rules_by_number(dispatch_rules.items, sip_number)
 
             if matching_rules:
                 return {
@@ -233,6 +203,35 @@ class Dispatch:
             }
         finally:
             await lkapi.aclose()
+
+
+    def _find_rules_by_id(self, rules: list, dispatch_id: str) -> list:
+        matching_rules = []
+        for rule in rules or []:
+            if rule.sip_dispatch_rule_id == dispatch_id:
+                matching_rules.append({
+                    "dispatch_id": rule.sip_dispatch_rule_id,
+                    "name": getattr(rule, "name", None),
+                    "trunk_ids": getattr(rule, "trunk_ids", []),
+                })
+        return matching_rules
+
+    async def _find_rules_by_number(self, rules: list, sip_number: str) -> list:
+        matching_rules = []
+        trunk = Trunk()
+        trunk_info = await trunk.get_trunk(sip_number)
+        trunk_id = trunk_info.get("trunk_id")
+
+        if trunk_id:
+            for rule in rules or []:
+                trunk_ids = getattr(rule, "trunk_ids", []) or []
+                if trunk_id in trunk_ids:
+                    matching_rules.append({
+                        "dispatch_id": rule.sip_dispatch_rule_id,
+                        "name": getattr(rule, "name", None),
+                        "trunk_ids": trunk_ids,
+                    })
+        return matching_rules
 
 
     async def delete_dispatch_rule(

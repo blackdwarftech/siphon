@@ -71,7 +71,7 @@ class CalendarService:
             with open(filepath, 'r') as f:
                 cred_data = json.load(f)
                 return cred_data.get('type') == 'service_account'
-        except:
+        except Exception:
             return False
 
     def _initialize_credentials(self):
@@ -81,55 +81,15 @@ class CalendarService:
             
         try:
             if not os.path.exists(self.credentials_path):
-                logger.error(
-                    f"Credentials file not found: {self.credentials_path}\n\n"
-                    f"Setup Instructions:\n"
-                    f"1. Go to https://console.cloud.google.com/\n"
-                    f"2. Enable Google Calendar API\n"
-                    f"3. Create Service Account credentials\n"
-                    f"4. Download JSON key and save as {self.credentials_path}\n"
-                    f"5. Share your calendar with the service account email\n\n"
-                    f"Set GOOGLE_CALENDAR_CREDENTIALS_PATH in .env to use a different path"
-                )
+                self._log_missing_credentials_error()
                 return None
             
             is_service_account = self._is_service_account_file(self.credentials_path)
             
             if is_service_account:
-                logger.info("Using service account authentication")
-                creds = ServiceAccountCredentials.from_service_account_file(
-                    self.credentials_path,
-                    scopes=self.__scope
-                )
-                logger.info("Service account authenticated successfully")
+                creds = self._init_service_account()
             else:
-                logger.info("Using OAuth authentication")
-                creds = None
-                
-                if os.path.exists(self.token_path):
-                    logger.info(f"Loading OAuth token from {self.token_path}")
-                    creds = Credentials.from_authorized_user_file(
-                        self.token_path, self.__scope
-                    )
-
-                if not creds or not creds.valid:
-                    if creds and creds.expired and creds.refresh_token:
-                        logger.info("Refreshing expired OAuth token")
-                        creds.refresh(Request())
-                    else:
-                        logger.warning(
-                            "OAuth flow required - opening browser. "
-                            "This should only happen ONCE. "
-                            "For production, use service account instead."
-                        )
-                        flow = InstalledAppFlow.from_client_secrets_file(
-                            self.credentials_path, self.__scope
-                        )
-                        creds = flow.run_local_server(port=0)
-
-                    logger.info(f"Saving OAuth token to {self.token_path}")
-                    with open(self.token_path, "w") as token:
-                        token.write(creds.to_json())
+                creds = self._init_oauth()
 
             self._credentials = creds
             logger.info("Credentials cached successfully")
@@ -141,6 +101,57 @@ class CalendarService:
         except Exception as e:
             logger.error(f"Credential initialization failed: {e}", exc_info=True)
             return None
+
+    def _log_missing_credentials_error(self):
+        logger.error(
+            f"Credentials file not found: {self.credentials_path}\n\n"
+            f"Setup Instructions:\n"
+            f"1. Go to https://console.cloud.google.com/\n"
+            f"2. Enable Google Calendar API\n"
+            f"3. Create Service Account credentials\n"
+            f"4. Download JSON key and save as {self.credentials_path}\n"
+            f"5. Share your calendar with the service account email\n\n"
+            f"Set GOOGLE_CALENDAR_CREDENTIALS_PATH in .env to use a different path"
+        )
+
+    def _init_service_account(self):
+        logger.info("Using service account authentication")
+        creds = ServiceAccountCredentials.from_service_account_file(
+            self.credentials_path,
+            scopes=self.__scope
+        )
+        logger.info("Service account authenticated successfully")
+        return creds
+
+    def _init_oauth(self):
+        logger.info("Using OAuth authentication")
+        creds = None
+        
+        if os.path.exists(self.token_path):
+            logger.info(f"Loading OAuth token from {self.token_path}")
+            creds = Credentials.from_authorized_user_file(
+                self.token_path, self.__scope
+            )
+
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                logger.info("Refreshing expired OAuth token")
+                creds.refresh(Request())
+            else:
+                logger.warning(
+                    "OAuth flow required - opening browser. "
+                    "This should only happen ONCE. "
+                    "For production, use service account instead."
+                )
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    self.credentials_path, self.__scope
+                )
+                creds = flow.run_local_server(port=0)
+
+            logger.info(f"Saving OAuth token to {self.token_path}")
+            with open(self.token_path, "w") as token:
+                token.write(creds.to_json())
+        return creds
 
     def __call__(self):
         """Returns a Calendar API service object with connection pooling and auto-recovery."""

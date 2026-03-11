@@ -45,7 +45,7 @@ class S3MemoryStore(MemoryStore):
         )
 
         if not all([s3_access_key, s3_secret_key, s3_bucket]):
-            raise Exception(
+            raise RuntimeError(
                 "S3/MinIO credentials missing. Set AWS_S3_ACCESS_KEY_ID / MINIO_ACCESS_KEY, "
                 "AWS_S3_SECRET_ACCESS_KEY / MINIO_SECRET_KEY and AWS_S3_BUCKET / MINIO_BUCKET"
             )
