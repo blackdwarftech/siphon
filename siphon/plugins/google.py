@@ -29,8 +29,10 @@ class STT(ClientWrapperMixin):
         self.credentials_info = credentials_info
         self.credentials_file = credentials_file
 
-        if not self.credentials_info or self.credentials_file: 
-            raise ValueError("GOOGLE_APPLICATION_CREDENTIALS location is required as environment variable or credentials_info (Array) is required")
+        if not self.credentials_info and not self.credentials_file:
+            raise ValueError(
+                "GOOGLE_APPLICATION_CREDENTIALS environment variable or credentials_info is required"
+            )
 
         self._client = self._build_client()
 
@@ -96,8 +98,10 @@ class TTS(ClientWrapperMixin):
         self.credentials_info = credentials_info
         self.credentials_file = credentials_file
 
-        if not self.credentials_info or self.credentials_file: 
-            raise ValueError("GOOGLE_APPLICATION_CREDENTIALS location is required as environment variable or credentials_info (Array) is required")
+        if not self.credentials_info and not self.credentials_file:
+            raise ValueError(
+                "GOOGLE_APPLICATION_CREDENTIALS environment variable or credentials_info is required"
+            )
 
         self._client = self._build_client()
 
@@ -126,7 +130,7 @@ class TTS(ClientWrapperMixin):
 
     # Recreate STT from config dict
     @classmethod
-    def from_config(cls, cfg: dict) -> "STT":
+    def from_config(cls, cfg: dict) -> "TTS":
         return cls(
             language=cfg.get("language", "en-US"),
             gender=cfg.get("gender", "female"),

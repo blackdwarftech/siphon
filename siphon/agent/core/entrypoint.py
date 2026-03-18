@@ -251,7 +251,7 @@ async def _setup_memory_and_agent(
         # Try to get phone number from metadata
         if is_inbound_call:
             # For inbound, we'll get it from SIP participant later
-            phone_number = metadata.get("user_number") or metadata.get("agent_number")
+            phone_number = metadata.get("user_number")
         else:
             # For outbound, it's the number we called
             phone_number = metadata.get("number_to_call") or metadata.get("user_number")

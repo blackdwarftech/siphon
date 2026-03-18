@@ -124,7 +124,7 @@ class CallMetadata:
         metadata['duration'] = end_time - start_time
         metadata['timezone'] = get_timezone_name() or "local"
 
-    def _determine_call_status(self, response) -> tuple:
+    def _determine_call_status(self, response) -> tuple[str, str]:
         """Determine call status and termination reason"""
         if not response:
             has_conversation = hasattr(self, 'conversation_history') and len(self.conversation_history) > 0
@@ -138,8 +138,9 @@ class CallMetadata:
             status = self.STATUS_MAPPING.get(response.status, 'completed')
         else:
             status = 'completed'
-        
-        return status
+
+        termination_reason = '' if status == 'completed' else status
+        return status, termination_reason
 
     def _get_recording_filename(self, response) -> str:
         """Extract recording filename from response"""
@@ -191,6 +192,7 @@ class CallMetadata:
             
             # Set status and termination reason
             metadata['status'] = reason
+            metadata['termination_reason'] = reason
             # Explicit answered flag for downstream consumers
             metadata['answered'] = False
             metadata['recording_filename'] = ''
@@ -240,8 +242,9 @@ class CallMetadata:
                 self._set_timing_metadata(metadata, start_timestamp, end_timestamp)
                 
                 # Determine status and termination reason
-                status = self._determine_call_status(response)
+                status, termination_reason = self._determine_call_status(response)
                 metadata['status'] = status
+                metadata['termination_reason'] = termination_reason
                 # Call reached a state where recording response exists -> treat as answered
                 metadata['answered'] = True
                 
@@ -256,8 +259,9 @@ class CallMetadata:
                 self._set_timing_metadata(metadata, start_timestamp, current_time)
                 
                 # Determine status for no-response scenario using the actual duration
-                status = self._determine_call_status(response)
+                status, termination_reason = self._determine_call_status(response)
                 metadata['status'] = status
+                metadata['termination_reason'] = termination_reason
                 metadata['recording_filename'] = ''
 
                 # Heuristic answered flag when we have no recording response:
