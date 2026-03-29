@@ -46,7 +46,7 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
         system_instructions: str, 
         interruptions_allowed: bool,
         room: rtc.Room = None,
-        phone_number: str = None,
+        phone_number: Optional[str] = None,
         remember_call: bool = False,
         memory_service: Optional[MemoryService] = None,
     ) -> None:
@@ -165,6 +165,19 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
                 logger.info("Greeting sent")
         except Exception as e:
             logger.error(f"Greeting error: {e}", exc_info=True)
+
+    def update_phone_number(self, phone_number: Optional[str]) -> None:
+        """Update memory phone number when SIP participant data becomes available."""
+        if not phone_number:
+            return
+
+        if phone_number != self._call_memory_phone:
+            self._call_memory_phone = phone_number
+
+            if self._memory_service:
+                self._memory_service.update_phone_number(phone_number)
+
+            logger.info(f"Updated call memory phone number: {phone_number}")
 
     # Agent lifecycle
     async def on_enter(self):

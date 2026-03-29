@@ -52,7 +52,7 @@ class MemoryService:
 
     def update_phone_number(self, phone_number: str) -> None:
         """Update the phone number for this service instance."""
-        if phone_number and not self._phone_number:
+        if phone_number and phone_number != self._phone_number:
             self._phone_number = phone_number
             logger.info(f"Memory service phone number updated: {phone_number}")
 
