@@ -15,3 +15,5 @@ agent.py
 call.py
 .scannerwork
 .pytest_cache
+.claude
+testing/
