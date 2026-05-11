@@ -1,7 +1,8 @@
 import asyncio
 import time
 from datetime import datetime
-from livekit.agents.voice import Agent
+from typing import AsyncIterable, Optional
+from livekit.agents.voice import Agent, ModelSettings
 from livekit import rtc
 from livekit.agents import ChatContext
 from siphon.config import get_logger, HangupCall, CallTranscription
@@ -11,8 +12,10 @@ import os
 
 logger = get_logger("calling-agent")
 
-from typing import Optional
 from siphon.memory import MemoryService
+
+# Maximum characters kept in the rolling agent-text buffer (for echo detection).
+_AGENT_TEXT_BUFFER_MAX = 1000
 
 
 def _get_current_datetime_stamp() -> str:
@@ -134,6 +137,10 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
         # Initialize transcription mixin for conversation tracking
         CallTranscription.__init__(self)
 
+        # Rolling buffer of recent agent output text (for echo detection).
+        # Filled by transcription_node() in real-time as LLM text streams to TTS.
+        self._agent_text_buffer: str = ""
+
     async def _setup_recording_task(self):
         if self.call_recording:
             try:
@@ -165,6 +172,41 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
                 logger.info("Greeting sent")
         except Exception as e:
             logger.error(f"Greeting error: {e}", exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Echo detection helpers
+    # ------------------------------------------------------------------
+
+    async def transcription_node(
+        self, text: AsyncIterable, model_settings
+    ) -> AsyncIterable:
+        """Override to capture real-time LLM output for echo comparison.
+
+        The transcription_node receives every text chunk the LLM produces
+        (the same text that flows to TTS).  We accumulate it into a rolling
+        buffer so the echo filter in entrypoint can compare incoming STT
+        transcripts against what the agent is *currently* saying.
+        """
+        async for delta in text:
+            self._agent_text_buffer += delta
+            # Keep only the most-recent characters (tail)
+            if len(self._agent_text_buffer) > _AGENT_TEXT_BUFFER_MAX:
+                self._agent_text_buffer = self._agent_text_buffer[
+                    -_AGENT_TEXT_BUFFER_MAX:
+                ]
+            yield delta
+
+    def get_recent_agent_text(self, max_chars: int = 500) -> str:
+        """Return the last *max_chars* characters the agent has generated."""
+        if len(self._agent_text_buffer) <= max_chars:
+            return self._agent_text_buffer
+        return self._agent_text_buffer[-max_chars:]
+
+    def clear_agent_text_buffer(self) -> None:
+        """Clear the buffer (called when agent stops speaking)."""
+        self._agent_text_buffer = ""
+
+    # ------------------------------------------------------------------
 
     def update_phone_number(self, phone_number: Optional[str]) -> None:
         """Update memory phone number when SIP participant data becomes available."""

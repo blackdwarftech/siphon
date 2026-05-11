@@ -85,7 +85,7 @@ keywords = [
 dependencies = [
     "livekit",
     "livekit-api",
-    "livekit-agents",
+    "livekit-agents>=1.5.1",
     "boto3",
     "python-dotenv",
     "livekit-plugins-noise-cancellation",

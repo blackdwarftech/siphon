@@ -1,7 +1,9 @@
 from livekit.agents import JobContext, room_io
 from livekit import rtc
 from livekit.agents.voice import AgentSession
+from livekit.agents.voice.agent_session import TurnHandlingOptions
 from livekit.plugins import silero, noise_cancellation
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from .voice_agent import AgentSetup
 import json
 import asyncio
@@ -210,6 +212,7 @@ def _build_agent_session(
     min_endpointing_delay: float,
     max_endpointing_delay: float,
     min_interruption_duration: float,
+    preemptive_generation: bool = True,
 ) -> AgentSession:
     """Construct an AgentSession with the configured models and settings."""
     vad_instance = silero.VAD.load(
@@ -218,16 +221,27 @@ def _build_agent_session(
         prefix_padding_duration=prefix_padding_duration,
     )
 
+    turn_options: TurnHandlingOptions = {
+        "turn_detection": MultilingualModel(),
+        "endpointing": {
+            "min_delay": min_endpointing_delay,
+            "max_delay": max_endpointing_delay,
+        },
+        "interruption": {
+            "enabled": allow_interruptions,
+            "mode": "adaptive",
+            "discard_audio_if_uninterruptible": False,
+            "min_duration": min_interruption_duration,
+        },
+    }
+
     return AgentSession(
         llm=session_llm,
         tts=session_tts,
         stt=session_stt,
         vad=vad_instance,
-        turn_detection="stt",
-        allow_interruptions=allow_interruptions,
-        min_endpointing_delay=min_endpointing_delay,
-        max_endpointing_delay=max_endpointing_delay,
-        min_interruption_duration=min_interruption_duration,
+        turn_handling=turn_options,
+        preemptive_generation=preemptive_generation,
         max_tool_steps=1000,
     )
 
@@ -329,16 +343,19 @@ async def entrypoint(
     greeting_instructions = kwargs.get("greeting_instructions", "Greet and introduce yourself briefly")
     system_instructions = kwargs.get("system_instructions", "You are a helpful voice assistant")
     allow_interruptions = kwargs.get("allow_interruptions", True)
-    min_silence_duration = kwargs.get("min_silence_duration", 0.25)
-    activation_threshold = kwargs.get("activation_threshold", 0.25)
-    prefix_padding_duration = kwargs.get("prefix_padding_duration", 1.0)
-    min_endpointing_delay = kwargs.get("min_endpointing_delay", 0.25)
-    max_endpointing_delay = kwargs.get("max_endpointing_delay", 1.5)
-    min_interruption_duration = kwargs.get("min_interruption_duration", 0.05)
+    min_silence_duration = kwargs.get("min_silence_duration", 0.5)
+    activation_threshold = kwargs.get("activation_threshold", 0.5)
+    prefix_padding_duration = kwargs.get("prefix_padding_duration", 0.3)
+    min_endpointing_delay = kwargs.get("min_endpointing_delay", 0.2)
+    max_endpointing_delay = kwargs.get("max_endpointing_delay", 0.6)
+    min_interruption_duration = kwargs.get("min_interruption_duration", 0.3)
+    preemptive_generation = kwargs.get("preemptive_generation", True)
     tools = kwargs.get("tools", None)
     google_calendar = kwargs.get("google_calendar", False)
     date_time = kwargs.get("date_time", True)
     remember_call = kwargs.get("remember_call", False)
+    noise_cancellation_sip = kwargs.get("noise_cancellation_sip", False)
+    debug = kwargs.get("debug", False)
 
     agent_setup: Optional[AgentSetup] = None
     try:
@@ -408,6 +425,7 @@ async def entrypoint(
             min_endpointing_delay=min_endpointing_delay,
             max_endpointing_delay=max_endpointing_delay,
             min_interruption_duration=min_interruption_duration,
+            preemptive_generation=preemptive_generation,
         )
 
         await session.start(
@@ -415,12 +433,68 @@ async def entrypoint(
             agent=agent_setup,
             room_options=room_io.RoomOptions(
                 audio_input=room_io.AudioInputOptions(
-                    noise_cancellation=lambda params: noise_cancellation.BVCTelephony() 
-                    if params.participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP 
-                    else noise_cancellation.BVC(),
+                    noise_cancellation=(
+                        lambda params: noise_cancellation.BVCTelephony()
+                        if params.participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
+                        else noise_cancellation.BVC()
+                    ) if noise_cancellation_sip else (
+                        lambda params: noise_cancellation.BVC()
+                        if params.participant.kind != rtc.ParticipantKind.PARTICIPANT_KIND_SIP
+                        else None
+                    ),
                 ),
             ),
         )
+
+        # ------------------------------------------------------------------
+        # Diagnostic logging (only when debug=True)
+        # ------------------------------------------------------------------
+
+        if debug:
+            interruption_opts = session.options.interruption
+            logger.info(
+                "Session config: interrupt_enabled=%s, interrupt_mode=%s, "
+                "discard_audio=%s, min_duration=%.2f, preemptive=%s",
+                interruption_opts.get("enabled"),
+                interruption_opts.get("mode"),
+                interruption_opts.get("discard_audio_if_uninterruptible"),
+                interruption_opts.get("min_duration"),
+                session.options.preemptive_generation,
+            )
+
+            @session.on("user_input_transcribed")
+            def _on_user_input_transcribed(ev):
+                """Log ALL transcripts with speech handle state for interrupt debugging."""
+                speech = session.current_speech
+                if speech:
+                    speech_info = (
+                        f"allow_int={speech.allow_interruptions}, "
+                        f"interrupted={speech.interrupted}, "
+                        f"done={speech.done()}"
+                    )
+                else:
+                    speech_info = "no active speech"
+
+                logger.info(
+                    "TRANSCRIPT: %r (final=%s, agent_state=%s, speech=[%s])",
+                    ev.transcript[:120] if ev.transcript else "<empty>",
+                    ev.is_final,
+                    session.agent_state,
+                    speech_info,
+                )
+
+            @session.on("agent_state_changed")
+            def _on_agent_state_changed(ev):
+                """Log agent state transitions and clear text buffer."""
+                logger.info("AGENT_STATE: %s -> %s", ev.old_state, ev.new_state)
+                if ev.new_state != "speaking":
+                    agent_setup.clear_agent_text_buffer()
+
+            @session.on("agent_false_interruption")
+            def _on_false_interruption(ev):
+                """Log when the SDK detects a false interruption (echo)."""
+                logger.info("FALSE_INTERRUPTION: resumed=%s", ev.resumed)
+
         logger.info("Agent session started successfully.")
 
         call_result = await monitor_call(ctx, agent_setup)
