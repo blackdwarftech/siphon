@@ -71,7 +71,7 @@ class STT(ClientWrapperMixin):
     @classmethod
     def from_config(cls, cfg: dict) -> "STT":
         return cls(
-            model=cfg.get("model"),
+            model=cfg.get("model", "nova-3"),
             language=cfg.get("language", "multi"),
             interim_results=cfg.get("interim_results", True),
             smart_format=cfg.get("smart_format", True),

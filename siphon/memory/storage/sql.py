@@ -1,12 +1,16 @@
 """SQL storage backend (PostgreSQL/MySQL) for call memory."""
 
+import asyncio
 import json
+import re
+from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse, parse_qs
 
 from .base import MemoryStore
 from siphon.memory.models import CallerMemory
 from siphon.config import get_logger
+from siphon.config import _redact_phone
 
 logger = get_logger("calling-agent")
 
@@ -30,12 +34,35 @@ class SQLMemoryStore(MemoryStore):
         self._is_mysql = url_lower.startswith('mysql')
         self._is_postgres = url_lower.startswith('postgres')
         
-        # Rebuild URL without query params for SQLAlchemy
+        # Build async URL from original (with real password) for DB connection
+        async_url = f"{parsed.scheme}://"
+        if parsed.username:
+            async_url += parsed.username
+            if parsed.password:
+                async_url += f":{parsed.password}"
+            async_url += "@"
+        if parsed.hostname:
+            async_url += parsed.hostname
+        elif "sqlite" not in parsed.scheme:
+            async_url += "localhost"
+        if parsed.port:
+            async_url += f":{parsed.port}"
+        async_url += parsed.path
+        
+        # Handle async scheme conversions on the REAL connection URL
+        if self._is_mysql:
+            scheme = async_url.split("://")[0]
+            async_url = async_url.replace(f"{scheme}://", "mysql+aiomysql://", 1)
+        elif self._is_postgres:
+            scheme = async_url.split("://")[0]
+            async_url = async_url.replace(f"{scheme}://", "postgresql+asyncpg://", 1)
+        
+        # Build masked URL for logging/display only
         clean_url = f"{parsed.scheme}://"
         if parsed.username:
             clean_url += parsed.username
             if parsed.password:
-                clean_url += f":{parsed.password}"
+                clean_url += ":***"
             clean_url += "@"
         if parsed.hostname:
             clean_url += parsed.hostname
@@ -44,14 +71,6 @@ class SQLMemoryStore(MemoryStore):
         if parsed.port:
             clean_url += f":{parsed.port}"
         clean_url += parsed.path
-        
-        # Handle async scheme conversions
-        if self._is_mysql:
-            scheme = clean_url.split("://")[0]
-            clean_url = clean_url.replace(f"{scheme}://", "mysql+aiomysql://", 1)
-        elif self._is_postgres:
-            scheme = clean_url.split("://")[0]
-            clean_url = clean_url.replace(f"{scheme}://", "postgresql+asyncpg://", 1)
         
         # Build connection arguments
         connect_args = {}
@@ -73,41 +92,45 @@ class SQLMemoryStore(MemoryStore):
             connect_args['timeout'] = 2
             connect_args['command_timeout'] = 2
         
-        self._engine = create_async_engine(clean_url, connect_args=connect_args)
+        self._engine = create_async_engine(async_url, connect_args=connect_args)
         self._text = text
         self._initialized = False
+        self._init_lock = asyncio.Lock()
 
     async def _ensure_initialized(self) -> None:
         """Create the caller_memories table with dialect-specific syntax if it doesn't exist."""
         if self._initialized:
             return
+        async with self._init_lock:
+            if self._initialized:
+                return
 
-        if self._is_mysql:
-            # MySQL syntax
-            create_sql = """
-                CREATE TABLE IF NOT EXISTS caller_memories (
-                    phone_number VARCHAR(50) PRIMARY KEY,
-                    memory JSON NOT NULL,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        ON UPDATE CURRENT_TIMESTAMP
-                )
-            """
-        else:
-            # PostgreSQL syntax
-            create_sql = """
-                CREATE TABLE IF NOT EXISTS caller_memories (
-                    phone_number VARCHAR(50) PRIMARY KEY,
-                    memory JSONB NOT NULL,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """
-        
-        try:
-            async with self._engine.begin() as conn:
-                await conn.execute(self._text(create_sql))
-            self._initialized = True
-        except Exception as e:
-            logger.error(f"SQL init table failed (db might be unreachable): {e}")
+            if self._is_mysql:
+                # MySQL syntax
+                create_sql = """
+                    CREATE TABLE IF NOT EXISTS caller_memories (
+                        phone_number VARCHAR(50) PRIMARY KEY,
+                        memory JSON NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                            ON UPDATE CURRENT_TIMESTAMP
+                    )
+                """
+            else:
+                # PostgreSQL syntax
+                create_sql = """
+                    CREATE TABLE IF NOT EXISTS caller_memories (
+                        phone_number VARCHAR(50) PRIMARY KEY,
+                        memory JSONB NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """
+            
+            try:
+                async with self._engine.begin() as conn:
+                    await conn.execute(self._text(create_sql))
+                self._initialized = True
+            except Exception as e:
+                logger.error(f"SQL init table failed (db might be unreachable): {e}")
 
     async def get(self, phone_number: str) -> Optional[CallerMemory]:
         """Load memory from SQL database."""
@@ -125,12 +148,12 @@ class SQLMemoryStore(MemoryStore):
                     if isinstance(data, str):
                         data = json.loads(data)
                     memory = CallerMemory.model_validate(data)
-                    logger.info(f"Loaded memory from SQL for {phone_number}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
+                    logger.info(f"Loaded memory from SQL for {_redact_phone(phone_number)}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
                     return memory
-            logger.debug(f"No memory found in SQL for {phone_number}")
+            logger.debug(f"No memory found in SQL for {_redact_phone(phone_number)}")
             return None
         except Exception as e:
-            logger.error(f"SQL get failed for {phone_number}: {e}")
+            logger.error(f"SQL get failed for {_redact_phone(phone_number)}: {e}")
             return None
 
     async def save(self, phone_number: str, memory: CallerMemory) -> None:
@@ -141,7 +164,7 @@ class SQLMemoryStore(MemoryStore):
             # Convert CallerMemory to dict
             memory_dict = memory.model_dump()
             # Serialize to JSON string for storage
-            memory_json = json.dumps(memory_dict, default=str)
+            memory_json = json.dumps(memory_dict, default=lambda v: v.isoformat() if isinstance(v, datetime) else str(v))
             
             async with self._engine.begin() as conn:
                 if self._is_mysql:
@@ -172,9 +195,9 @@ class SQLMemoryStore(MemoryStore):
                         ),
                         {"phone": phone_number, "memory": memory_json}
                     )
-            logger.info(f"Saved memory to SQL for {phone_number}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
+            logger.info(f"Saved memory to SQL for {_redact_phone(phone_number)}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
         except Exception as e:
-            logger.error(f"SQL save failed for {phone_number}: {e}")
+            logger.error(f"SQL save failed for {_redact_phone(phone_number)}: {e}")
 
     async def delete(self, phone_number: str) -> bool:
         """Delete memory from SQL database."""
@@ -187,7 +210,7 @@ class SQLMemoryStore(MemoryStore):
                 )
                 return result.rowcount > 0
         except Exception as e:
-            logger.error(f"SQL delete failed for {phone_number}: {e}")
+            logger.error(f"SQL delete failed for {_redact_phone(phone_number)}: {e}")
             return False
 
     async def exists(self, phone_number: str) -> bool:
@@ -201,5 +224,5 @@ class SQLMemoryStore(MemoryStore):
                 )
                 return result.fetchone() is not None
         except Exception as e:
-            logger.error(f"SQL exists check failed for {phone_number}: {e}")
+            logger.error(f"SQL exists check failed for {_redact_phone(phone_number)}: {e}")
             return False

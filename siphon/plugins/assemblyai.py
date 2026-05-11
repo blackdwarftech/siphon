@@ -52,7 +52,7 @@ class STT(ClientWrapperMixin):
     @classmethod
     def from_config(cls, cfg: dict) -> "STT":
         return cls(
-            model=cfg.get("model"),
+            model=cfg.get("model", "universal-streaming-multilingual"),
             end_of_turn_confidence_threshold=cfg.get("end_of_turn_confidence_threshold", 0.4),
             min_end_of_turn_silence_when_confident=cfg.get("min_end_of_turn_silence_when_confident", 400),
             max_turn_silence=cfg.get("max_turn_silence", 1280)

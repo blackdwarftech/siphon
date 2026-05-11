@@ -1,7 +1,8 @@
 """S3/MinIO storage backend for call memory."""
 
 import json
-import os
+import re
+from datetime import datetime
 from typing import Optional
 
 import aioboto3
@@ -10,6 +11,8 @@ from botocore.config import Config
 from .base import MemoryStore
 from siphon.memory.models import CallerMemory
 from siphon.config import get_logger
+from siphon.config import _redact_phone
+from siphon.config.s3_utils import ensure_s3_bucket_async, get_s3_config
 
 logger = get_logger("calling-agent")
 
@@ -27,41 +30,14 @@ class S3MemoryStore(MemoryStore):
 
     def _get_s3_config(self) -> dict:
         """Get S3 configuration from environment."""
-        s3_endpoint = os.getenv("AWS_S3_ENDPOINT")
-        s3_access_key = (
-            os.getenv("AWS_S3_ACCESS_KEY_ID")
-            or os.getenv("AWS_ACCESS_KEY_ID")
-            or os.getenv("MINIO_ACCESS_KEY")
-        )
-        s3_secret_key = (
-            os.getenv("AWS_S3_SECRET_ACCESS_KEY")
-            or os.getenv("AWS_SECRET_ACCESS_KEY")
-            or os.getenv("MINIO_SECRET_KEY")
-        )
-        s3_bucket = os.getenv("AWS_S3_BUCKET") or os.getenv("MINIO_BUCKET")
-        s3_region = os.getenv("AWS_S3_REGION", "us-east-1")
-        s3_force_path_style = (
-            os.getenv("AWS_S3_FORCE_PATH_STYLE", "false").lower() == "true"
-        )
-
-        if not all([s3_access_key, s3_secret_key, s3_bucket]):
-            raise RuntimeError(
-                "S3/MinIO credentials missing. Set AWS_S3_ACCESS_KEY_ID / MINIO_ACCESS_KEY, "
-                "AWS_S3_SECRET_ACCESS_KEY / MINIO_SECRET_KEY and AWS_S3_BUCKET / MINIO_BUCKET"
-            )
-
-        return {
-            "access_key": s3_access_key,
-            "secret": s3_secret_key,
-            "bucket": s3_bucket,
-            "region": s3_region,
-            "endpoint": s3_endpoint,
-            "force_path_style": s3_force_path_style,
-        }
+        return get_s3_config()
 
     def _get_key(self, phone_number: str) -> str:
         """Get S3 key for phone number."""
-        safe_phone = phone_number.lstrip("+").replace(" ", "_").replace("-", "_")
+        # Normalize: remove all non-digit characters to prevent collisions
+        safe_phone = re.sub(r'\D', '', phone_number)
+        if not safe_phone:
+            safe_phone = "unknown"
         return f"call_memory/{safe_phone}.json"
 
     def _create_s3_client(self):
@@ -72,7 +48,7 @@ class S3MemoryStore(MemoryStore):
         config_kwargs = {
             "connect_timeout": 2,
             "read_timeout": 2,
-            "retries": {"max_attempts": 0}
+            "retries": {"max_attempts": 3}
         }
         if self.config["force_path_style"]:
             config_kwargs["s3"] = {"addressing_style": "path"}
@@ -85,17 +61,26 @@ class S3MemoryStore(MemoryStore):
         try:
             key = self._get_key(phone_number)
             async with self._create_s3_client() as s3_client:
+                await ensure_s3_bucket_async(s3_client, self.config["bucket"], self.config["region"])
                 response = await s3_client.get_object(Bucket=self.config["bucket"], Key=key)
                 body = await response["Body"].read()
                 data = json.loads(body.decode("utf-8"))
                 memory = CallerMemory.model_validate(data)
-                logger.info(f"Loaded memory from S3 for {phone_number}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
+                logger.info(f"Loaded memory from S3 for {_redact_phone(phone_number)}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
                 return memory
         except Exception as e:
-            if "NoSuchKey" in str(e):
-                logger.debug(f"No memory found in S3 for {phone_number}")
+            # Check for NoSuchKey using the error response code
+            is_not_found = False
+            if hasattr(e, 'response') and e.response:
+                error_code = e.response.get('Error', {}).get('Code', '')
+                is_not_found = error_code == 'NoSuchKey'
+            elif "NoSuchKey" in str(e):
+                is_not_found = True
+            
+            if is_not_found:
+                logger.debug(f"No memory found in S3 for {_redact_phone(phone_number)}")
                 return None
-            logger.error(f"Error loading memory from S3 for {phone_number}: {e}")
+            logger.error(f"Error loading memory from S3 for {_redact_phone(phone_number)}: {e}")
             return None
 
     async def save(self, phone_number: str, memory: CallerMemory) -> None:
@@ -103,24 +88,26 @@ class S3MemoryStore(MemoryStore):
         try:
             key = self._get_key(phone_number)
             data = memory.model_dump()
-            body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+            body = json.dumps(data, ensure_ascii=False, default=lambda v: v.isoformat() if isinstance(v, datetime) else str(v)).encode("utf-8")
             
             async with self._create_s3_client() as s3_client:
+                await ensure_s3_bucket_async(s3_client, self.config["bucket"], self.config["region"])
                 await s3_client.put_object(
                     Bucket=self.config["bucket"],
                     Key=key,
                     Body=body,
                     ContentType="application/json",
                 )
-            logger.info(f"Saved memory to S3 for {phone_number}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
+            logger.info(f"Saved memory to S3 for {_redact_phone(phone_number)}: {memory.total_calls} calls, {len(memory.summaries)} summaries")
         except Exception as e:
-            logger.error(f"Error saving memory to S3 for {phone_number}: {e}")
+            logger.error(f"Error saving memory to S3 for {_redact_phone(phone_number)}: {e}")
 
     async def delete(self, phone_number: str) -> bool:
         """Delete memory from S3."""
         try:
             key = self._get_key(phone_number)
             async with self._create_s3_client() as s3_client:
+                await ensure_s3_bucket_async(s3_client, self.config["bucket"], self.config["region"])
                 await s3_client.delete_object(Bucket=self.config["bucket"], Key=key)
             return True
         except Exception:
@@ -131,6 +118,7 @@ class S3MemoryStore(MemoryStore):
         try:
             key = self._get_key(phone_number)
             async with self._create_s3_client() as s3_client:
+                await ensure_s3_bucket_async(s3_client, self.config["bucket"], self.config["region"])
                 await s3_client.head_object(Bucket=self.config["bucket"], Key=key)
             return True
         except Exception:

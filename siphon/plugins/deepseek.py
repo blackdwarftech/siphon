@@ -51,8 +51,8 @@ class LLM(ClientWrapperMixin):
     @classmethod
     def from_config(cls, cfg: dict) -> "LLM":
         return cls(
-            model=cfg.get("model"),
-            base_url=cfg.get("base_url"),
+            model=cfg.get("model", "deepseek-chat"),
+            base_url=cfg.get("base_url", "https://api.deepseek.com/v1"),
             temperature=cfg.get("temperature", 0.3),
             parallel_tool_calls=cfg.get("parallel_tool_calls", True),
         )

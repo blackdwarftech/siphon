@@ -4,7 +4,10 @@ from typing import Any, Optional, Dict
 import sys
 import os
 
+from siphon.config import get_logger
 from .core.entrypoint import entrypoint
+
+logger = get_logger("agent-runner")
 
 
 class Agent:
@@ -39,6 +42,8 @@ class Agent:
 
         original_argv = sys.argv.copy()
         try:
+            # WARNING: Mutating sys.argv is not thread-safe.
+            # Only one Agent instance should be active per process.
             sys.argv = [sys.argv[0], mode]
             
             # Set force download environment variable if requested
@@ -64,16 +69,30 @@ class Agent:
     def dev(self, agent_name: Optional[str] = None) -> None:
         try:
             self._run(agent_name=agent_name, mode="dev")
-        except Exception:
+        except (FileNotFoundError, RuntimeError) as e:
+            # Only retry on file/model-related errors
+            logger.info(f"Initial run failed with {type(e).__name__}: {e}. Attempting to download files...")
             self.download_files(agent_name)
             self._run(agent_name=agent_name, mode="dev")
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            logger.error(f"Agent dev mode failed: {e}")
+            raise
 
     def start(self, agent_name: Optional[str] = None) -> None:
         try:
             self._run(agent_name=agent_name, mode="start")
-        except Exception:
+        except (FileNotFoundError, RuntimeError) as e:
+            # Only retry on file/model-related errors
+            logger.info(f"Initial run failed with {type(e).__name__}: {e}. Attempting to download files...")
             self.download_files(agent_name)
             self._run(agent_name=agent_name, mode="start")
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            logger.error(f"Agent start failed: {e}")
+            raise
 
     def download_files(self, agent_name: Optional[str] = None, force: bool = True) -> None:
         """Download required model files.

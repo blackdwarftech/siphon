@@ -61,10 +61,10 @@ class LLM(ClientWrapperMixin):
     @classmethod
     def from_config(cls, cfg: dict) -> "LLM":
         return cls(
-            model=cfg.get("model"),
-            base_url=cfg.get("base_url"),
+            model=cfg.get("model", "gpt-4.1-mini"),
+            base_url=cfg.get("base_url", "https://api.openai.com/v1"),
             temperature=cfg.get("temperature", 0.3),
-            max_completion_tokens=cfg.get("max_completion_tokens"),
+            max_completion_tokens=cfg.get("max_completion_tokens", 150),
             parallel_tool_calls=cfg.get("parallel_tool_calls", True),
             timeout=cfg.get("timeout", 15)
         )
@@ -163,9 +163,9 @@ class TTS(ClientWrapperMixin):
             "instructions": self.instructions
         }
 
-    # Recreate STT from config dict
+    # Recreate TTS from config dict
     @classmethod
-    def from_config(cls, cfg: dict) -> "STT":
+    def from_config(cls, cfg: dict) -> "TTS":
         return cls(
             model=cfg.get("model", "gpt-4o-mini-tts"),
             voice=cfg.get("voice", "ash"),
@@ -179,8 +179,11 @@ class Realtime(ClientWrapperMixin):
         model: Optional[str] = "gpt-realtime",
         api_key: Optional[str] = None,
         voice: Optional[str] = "alloy",
-        temperature: Optional[int] = 0.3
+        temperature: Optional[float] = 0.3
     ) -> None:
+        if api_key is None:
+            api_key = os.getenv("OPENAI_API_KEY")
+
         self.model = model
         self.api_key = api_key
         self.voice = voice

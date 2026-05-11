@@ -146,13 +146,19 @@ async def execute_request_async(request: HttpRequest) -> Dict[str, Any]:
     - Automatic retry on 429, 500, 502, 503, 504
     - Empty response handling (e.g., DELETE returns None)
     """
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
     last_error = None
     
     for attempt in range(MAX_RETRIES):
         try:
-            async with asyncio.timeout(REQUEST_TIMEOUT):
-                result = await loop.run_in_executor(calendar_service._executor, request.execute)
+            # Use asyncio.wait_for for Python 3.10 compatibility
+            coro = loop.run_in_executor(calendar_service._executor, request.execute)
+            result = await asyncio.wait_for(coro, timeout=REQUEST_TIMEOUT)
             calendar_service.record_success()
             return result if result is not None else {}
         except TimeoutError:

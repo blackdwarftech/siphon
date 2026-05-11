@@ -4,6 +4,7 @@ from .telephony.inbound.dispatch import Dispatch
 from .telephony.outbound.make_call import Call
 
 # Initialize basic logging configuration for the package on import.
-configure_logging()
+# Logging is configured lazily on first use via get_logger()
+# to avoid overriding consumer's logging configuration at import time
 
 __all__ = ["Agent", "Dispatch", "Call"]

@@ -1,10 +1,14 @@
+from __future__ import annotations
+
 from livekit import api
 from livekit.agents import get_job_context
 from datetime import datetime
 import os
+import asyncio
 import boto3
 from botocore.config import Config
 from .logging_config import get_logger
+from .s3_utils import ensure_s3_bucket_sync, get_s3_config
 from .timezone_utils import get_timezone
 
 logger = get_logger("calling-agent")
@@ -19,39 +23,9 @@ class CallRecording:
         
     def _get_s3_config(self):
         """Return S3/MinIO configuration derived from environment variables."""
-        s3_endpoint = os.getenv("AWS_S3_ENDPOINT")  # MinIO: http://localhost:9000
-
-        s3_access_key = (os.getenv("AWS_S3_ACCESS_KEY_ID") or 
-                        os.getenv("AWS_ACCESS_KEY_ID") or 
-                        os.getenv("MINIO_ACCESS_KEY"))
-
-        s3_secret_key = (os.getenv("AWS_S3_SECRET_ACCESS_KEY") or 
-                        os.getenv("AWS_SECRET_ACCESS_KEY") or 
-                        os.getenv("MINIO_SECRET_KEY"))
-
-        s3_bucket = (os.getenv("AWS_S3_BUCKET") or 
-                    os.getenv("MINIO_BUCKET"))
-
-        s3_region = os.getenv("AWS_S3_REGION", "us-east-1")
-        s3_force_path_style = os.getenv("AWS_S3_FORCE_PATH_STYLE", "false").lower() == "true"
-        
-        if not all([s3_access_key, s3_secret_key, s3_bucket]):
-            raise RuntimeError(
-                "S3/MinIO credentials missing. Set:\n"
-                "  AWS_S3_ACCESS_KEY_ID / MINIO_ACCESS_KEY\n"
-                "  AWS_S3_SECRET_ACCESS_KEY / MINIO_SECRET_KEY\n"
-                "  AWS_S3_BUCKET / MINIO_BUCKET"
-            )
-        
-        self.s3_bucket = s3_bucket
-        return {
-            "access_key": s3_access_key,
-            "secret": s3_secret_key,
-            "bucket": s3_bucket,
-            "region": s3_region,
-            "endpoint": s3_endpoint,
-            "force_path_style": s3_force_path_style,
-        }
+        config = get_s3_config()
+        self.s3_bucket = config["bucket"]
+        return config
     
     def _get_livekit_api(self):
         """Return LiveKit API bound to the current job context."""
@@ -73,13 +47,29 @@ class CallRecording:
             tz = get_timezone()
             now = datetime.now(tz) if tz is not None else datetime.now()
             timestamp = now.strftime("%d-%m-%Y-%I-%M-%p")
-            safe_room_name = ctx.room.name.replace(" ", "_")
+            # Sanitize room name to prevent path traversal
+            import re
+            safe_room_name = re.sub(r'[^\w\-_.]', '_', ctx.room.name).strip('_')
             folder = f"{safe_room_name}/{timestamp}"
             self.filename = f"call_{safe_room_name}_{timestamp}.ogg"
             s3_key = f"{folder}/{self.filename}"
             self.s3_key = s3_key
 
             s3_config = self._get_s3_config()
+
+            # Ensure bucket exists before starting egress
+            session = boto3.session.Session(
+                aws_access_key_id=s3_config["access_key"],
+                aws_secret_access_key=s3_config["secret"],
+                region_name=s3_config["region"],
+            )
+            client_kwargs = {}
+            if s3_config["endpoint"]:
+                client_kwargs["endpoint_url"] = s3_config["endpoint"]
+            if s3_config["force_path_style"]:
+                client_kwargs["config"] = Config(s3={"addressing_style": "path"})
+            temp_client = session.client("s3", **client_kwargs)
+            ensure_s3_bucket_sync(temp_client, s3_config["bucket"], s3_config["region"])
 
             logger.info(f"🚀 Starting recording to {s3_config['bucket']}/{s3_key}")
 
@@ -121,8 +111,13 @@ class CallRecording:
     async def stop_recording(self):
         """Stop egress for the current call and log the resulting file info."""
         try:
-            if not self.is_recording or not self.recording_id:
+            if not self.is_recording:
                 logger.warning("No active recording to stop")
+                return None
+            
+            if not self.recording_id:
+                logger.warning("Recording state inconsistent: is_recording=True but recording_id=None")
+                self.is_recording = False
                 return None
             
             livekit_api = self._get_livekit_api()
@@ -200,6 +195,7 @@ class CallRecording:
                 client_kwargs["config"] = Config(s3={"addressing_style": "path"})
 
             s3_client = session.client("s3", **client_kwargs)
+            ensure_s3_bucket_sync(s3_client, s3_config["bucket"], s3_config["region"])
             
             delete_kwargs = {
                 "Bucket": s3_config["bucket"],
@@ -209,7 +205,9 @@ class CallRecording:
             if expected_owner:
                 delete_kwargs["ExpectedBucketOwner"] = expected_owner
                 
-            s3_client.delete_object(**delete_kwargs)
+            def _delete_sync():
+                s3_client.delete_object(**delete_kwargs)
+            await asyncio.to_thread(_delete_sync)
             logger.info(f"🗑️ Discarded recording from s3://{s3_config['bucket']}/{key}")
 
         except Exception as e:

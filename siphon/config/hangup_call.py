@@ -39,7 +39,8 @@ class HangupCall(CallRecording,CallMetadata):
 
         if not getattr(self, "_hangup_enabled", False):
             # Tool is present but disabled for this agent/call.
-            return
+            logger.info("end_call tool called but HANGUP_CALL is disabled; call end suppressed")
+            return "Call end is currently disabled. Continue the conversation normally."
 
         # Let the agent finish speaking before hanging up.
         await ctx.wait_for_playout()
@@ -54,11 +55,14 @@ class HangupCall(CallRecording,CallMetadata):
 
         if self._call_recording:
             try:
-                self.response = await self.stop_recording()
+                recording_response = await self.stop_recording()
+                # Only update self.response if stop_recording succeeded
+                if recording_response is not None:
+                    self.response = recording_response
                 logger.info(f"Stopped recording before ending call. Response: {self.response}")
             except Exception as e:
                 logger.error(f"Error stopping recording before ending call: {e}")
-                self.response = None
+                # Don't overwrite self.response on error - preserve any existing value
 
         if self._save_metadata:
             await self.save_call_metadata(self.response)

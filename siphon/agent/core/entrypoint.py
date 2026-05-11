@@ -1,5 +1,5 @@
 from livekit.agents import JobContext, room_io
-from livekit import rtc
+from livekit import rtc, api
 from livekit.agents.voice import AgentSession
 from livekit.agents.voice.agent_session import TurnHandlingOptions
 from livekit.plugins import silero, noise_cancellation
@@ -12,7 +12,7 @@ from siphon.agent.agent_components.llm import get_llm_component
 from siphon.agent.agent_components.stt import get_stt_component
 from siphon.agent.agent_components.tts import get_tts_component
 from .utils import resolve_component
-from siphon.config import get_logger
+from siphon.config import get_logger, _redact_phone
 
 logger = get_logger("calling-agent")
 
@@ -20,13 +20,12 @@ logger = get_logger("calling-agent")
 async def monitor_call(ctx: JobContext, agent: AgentSetup):
     logger.info("Starting SIP call status monitoring...")
 
-    monitoring_span = None
     timeout_seconds = 30
-    start_time = asyncio.get_event_loop().time()
+    start_time = asyncio.get_running_loop().time()
 
     try:
         while True:
-            current_time = asyncio.get_event_loop().time()
+            current_time = asyncio.get_running_loop().time()
             if (current_time - start_time) > timeout_seconds:
                 await agent.handle_unanswered_call()
                 return False
@@ -37,24 +36,35 @@ async def monitor_call(ctx: JobContext, agent: AgentSetup):
                     await agent.handle_unanswered_call()
                 return sip_status_result
 
-            await asyncio.sleep(0.1)  
-    finally:
-        if monitoring_span:
-            monitoring_span.end()
+            await asyncio.sleep(0.1)
+    except Exception:
+        logger.exception("SIP monitoring error")
+        raise
 
 
 def _check_sip_status(ctx: JobContext, agent: AgentSetup) -> Optional[bool]:
     if not ctx.room.remote_participants:
         return None
-        
+    
+    # Check all participants: any "active" means the call is live
+    # Only return False if ALL participants are "hangup"
+    has_active = False
+    all_hangup = True
+    
     for participant in ctx.room.remote_participants.values():
-        sip_status = participant.attributes.get("sip.callStatus")
+        attrs = getattr(participant, "attributes", None) or {}
+        sip_status = attrs.get("sip.callStatus")
 
         if sip_status == "active":
             _handle_active_sip(participant, agent)
-            return True
-        elif sip_status == "hangup":
-            return False
+            has_active = True
+        elif sip_status != "hangup":
+            all_hangup = False
+    
+    if has_active:
+        return True
+    if all_hangup:
+        return False
             
     return None
 
@@ -68,7 +78,7 @@ def _handle_active_sip(participant, agent: AgentSetup) -> None:
     
     if hasattr(agent, 'update_phone_number') and caller_number:
         agent.update_phone_number(caller_number)
-        logger.info(f"Updated call memory phone number from SIP: {caller_number}")
+        logger.info(f"Updated call memory phone number from SIP: {_redact_phone(caller_number)}")
 
 
 def _load_metadata(ctx: JobContext) -> Optional[Dict[str, Any]]:
@@ -117,14 +127,10 @@ def _derive_agent_config(
             stt = get_stt_component(stt_cfg)
 
         if agent_config.get("greeting_instructions"):
-            greeting_instructions = agent_config.get(
-                "greeting_instructions", greeting_instructions
-            )
+            greeting_instructions = agent_config["greeting_instructions"]
 
         if agent_config.get("system_instructions"):
-            system_instructions = agent_config.get(
-                "system_instructions", system_instructions
-            )
+            system_instructions = agent_config["system_instructions"]
     else:
         is_inbound_call = True
         agent_config = metadata
@@ -233,6 +239,7 @@ def _build_agent_session(
             "discard_audio_if_uninterruptible": False,
             "min_duration": min_interruption_duration,
         },
+        "preemptive_generation": {"enabled": preemptive_generation},
     }
 
     return AgentSession(
@@ -241,8 +248,7 @@ def _build_agent_session(
         stt=session_stt,
         vad=vad_instance,
         turn_handling=turn_options,
-        preemptive_generation=preemptive_generation,
-        max_tool_steps=1000,
+        max_tool_steps=10,
     )
 
 
@@ -270,11 +276,11 @@ async def _setup_memory_and_agent(
             # For outbound, it's the number we called
             phone_number = metadata.get("number_to_call") or metadata.get("user_number")
         
-        logger.info(f"Call memory enabled. Phone number from metadata: {phone_number}")
+        logger.info(f"Call memory enabled. Phone number from metadata: {'[REDACTED]' if phone_number else 'None'}")
 
     # Initialize MemoryService for call memory
     memory_service = None
-    enhanced_instructions = system_instructions
+    enhanced_instructions = system_instructions or "You are a helpful voice assistant"
     if remember_call:
         from siphon.memory import MemoryService
         memory_service = MemoryService(
@@ -285,12 +291,12 @@ async def _setup_memory_and_agent(
         if phone_number:
             loaded_memory = await memory_service.load(phone_number)
             if loaded_memory:
-                logger.info(f"Loaded memory for {phone_number}: total_calls={loaded_memory.total_calls}, summaries={len(loaded_memory.summaries)}")
+                logger.info(f"Loaded memory for [REDACTED]: total_calls={loaded_memory.total_calls}, summaries={len(loaded_memory.summaries)}")
                 enhanced_instructions = memory_service.enhance_instructions(
                     system_instructions, loaded_memory
                 )
             else:
-                logger.info(f"No previous call memory found for {phone_number}")
+                logger.info(f"No previous call memory found for [REDACTED]")
     
     # Inject calendar operation guidelines if Google Calendar integration is enabled
     if google_calendar:
@@ -308,19 +314,8 @@ async def _setup_memory_and_agent(
         phone_number=phone_number,
         remember_call=remember_call,
         memory_service=memory_service,
+        date_time=date_time,
     )
-    
-    # Initialize DateTime if it's in the class hierarchy and enabled
-    if date_time and hasattr(agent_setup, '__class__'):
-        from siphon.integrations import DateTime
-        if DateTime in agent_setup.__class__.__mro__:
-            DateTime.__init__(agent_setup)
-    
-    # Initialize GoogleCalendar if it's in the class hierarchy
-    if google_calendar and hasattr(agent_setup, '__class__'):
-        from siphon.integrations import GoogleCalendar
-        if GoogleCalendar in agent_setup.__class__.__mro__:
-            GoogleCalendar.__init__(agent_setup)
 
     return agent_setup, memory_service
 
@@ -340,8 +335,8 @@ async def entrypoint(
     AgentSession bound to the current room.
     """
     send_greeting = kwargs.get("send_greeting", True)
-    greeting_instructions = kwargs.get("greeting_instructions", "Greet and introduce yourself briefly")
-    system_instructions = kwargs.get("system_instructions", "You are a helpful voice assistant")
+    greeting_instructions = kwargs.get("greeting_instructions") or "Greet and introduce yourself briefly"
+    system_instructions = kwargs.get("system_instructions") or "You are a helpful voice assistant"
     allow_interruptions = kwargs.get("allow_interruptions", True)
     min_silence_duration = kwargs.get("min_silence_duration", 0.5)
     activation_threshold = kwargs.get("activation_threshold", 0.5)
@@ -361,7 +356,15 @@ async def entrypoint(
     try:
         metadata = _load_metadata(ctx)
         if metadata is None:
-            return
+            logger.error("Failed to load job metadata - ending job")
+            # Clean up the room since we're exiting
+            try:
+                await ctx.api.room.delete_room(
+                    api.DeleteRoomRequest(room=ctx.room.name)
+                )
+            except Exception as cleanup_error:
+                logger.error(f"Error cleaning up room after metadata failure: {cleanup_error}")
+            raise RuntimeError("Invalid job metadata - agent cannot start")
 
         (
             is_inbound_call,
@@ -510,3 +513,4 @@ async def entrypoint(
                 logger.error(
                     "Error saving metadata for failed call: %s", meta_error
                 )
+        raise

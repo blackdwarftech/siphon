@@ -23,8 +23,9 @@ class LLM(ClientWrapperMixin):
         self.temperature = temperature
         self.parallel_tool_calls = parallel_tool_calls
 
+        # Ollama is local and does not require authentication
         if not self.api_key:
-            raise ValueError("OLLAMA_API_KEY environment variable is not set")
+            self.api_key = "ollama"
 
         self._client = self._build_client()
 
@@ -51,8 +52,8 @@ class LLM(ClientWrapperMixin):
     @classmethod
     def from_config(cls, cfg: dict) -> "LLM":
         return cls(
-            model=cfg.get("model"),
-            base_url=cfg.get("base_url"),
+            model=cfg.get("model", "llama3.1"),
+            base_url=cfg.get("base_url", "http://localhost:11434/v1"),
             temperature=cfg.get("temperature", 0.3),
             parallel_tool_calls=cfg.get("parallel_tool_calls", True),
         )

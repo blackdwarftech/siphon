@@ -50,7 +50,7 @@ class LLM(ClientWrapperMixin):
     @classmethod
     def from_config(cls, cfg: dict) -> "LLM":
         return cls(
-            model=cfg.get("model"),
+            model=cfg.get("model", "gemini-2.5-flash-lite"),
             max_output_tokens=cfg.get("max_output_tokens", 150),
             temperature=cfg.get("temperature", 0.3)
         )
@@ -107,7 +107,7 @@ class Realtime(ClientWrapperMixin):
         model: Optional[str] = "gemini-2.5-flash-native-audio-preview-12-2025",
         api_key: Optional[str] = None,
         voice: Optional[str] = "Puck",
-        temperature: Optional[int] = 0.3,
+        temperature: Optional[float] = 0.3,
         max_output_tokens: Optional[int] = 150
     ) -> None:
         self.model = model

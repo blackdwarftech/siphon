@@ -12,7 +12,7 @@ class LLM(ClientWrapperMixin):
         self,
         model: Optional[str] = "qwen/qwen3-32b",
         api_key: Optional[str] = None,
-        temperature: Optional[int] = 0.3,
+        temperature: Optional[float] = 0.3,
         parallel_tool_calls: Optional[bool] = True,
     ) -> None:
         if api_key is None:
@@ -49,7 +49,7 @@ class LLM(ClientWrapperMixin):
     @classmethod
     def from_config(cls, cfg: dict) -> "LLM":
         return cls(
-            model=cfg.get("model"),
+            model=cfg.get("model", "qwen/qwen3-32b"),
             temperature=cfg.get("temperature", 0.3),
             parallel_tool_calls=cfg.get("parallel_tool_calls", True)
         )
@@ -93,6 +93,7 @@ class STT(ClientWrapperMixin):
         return {
             "provider": "groq",
             "model": self.model,
+            "base_url": self.base_url,
             "language": self.language,
             "detect_language": self.detect_language
         }
@@ -102,6 +103,7 @@ class STT(ClientWrapperMixin):
     def from_config(cls, cfg: dict) -> "STT":
         return cls(
             model=cfg.get("model", "whisper-large-v3-turbo"),
+            base_url=cfg.get("base_url", "https://api.groq.com/openai/v1"),
             language=cfg.get("language", "en"),
             detect_language=cfg.get("detect_language", False)
         )

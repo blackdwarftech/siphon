@@ -58,7 +58,8 @@ class STT(ClientWrapperMixin):
             "punctuate": self.punctuate,
             "model": self.model,
             "spoken_punctuation": self.spoken_punctuation,
-            "credentials_info": self.credentials_info
+            # credentials_info intentionally excluded - contains private_key
+            # Use credentials_file or GOOGLE_APPLICATION_CREDENTIALS env var instead
         }
 
     # Recreate STT from config dict
@@ -71,7 +72,8 @@ class STT(ClientWrapperMixin):
             punctuate=cfg.get("punctuate", True),
             model=cfg.get("model", "chirp"),
             spoken_punctuation=cfg.get("spoken_punctuation", False),
-            credentials_info=cfg.get("credentials_info")
+            credentials_info=cfg.get("credentials_info"),
+            credentials_file=cfg.get("credentials_file")
         )
 
 
@@ -125,10 +127,10 @@ class TTS(ClientWrapperMixin):
             "voice_name": self.voice_name,
             "voice_cloning_key": self.voice_cloning_key,
             "sample_rate": self.sample_rate,
-            "credentials_info": self.credentials_info
+            # credentials_info intentionally excluded - contains private_key
         }
 
-    # Recreate STT from config dict
+    # Recreate TTS from config dict
     @classmethod
     def from_config(cls, cfg: dict) -> "TTS":
         return cls(
@@ -137,5 +139,6 @@ class TTS(ClientWrapperMixin):
             voice_name=cfg.get("voice_name", "en-US-Standard-H"),
             voice_cloning_key=cfg.get("voice_cloning_key"),
             sample_rate=cfg.get("sample_rate", 24000),
-            credentials_info=cfg.get("credentials_info")
+            credentials_info=cfg.get("credentials_info"),
+            credentials_file=cfg.get("credentials_file")
         )

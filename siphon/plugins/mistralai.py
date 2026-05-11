@@ -52,7 +52,7 @@ class LLM(ClientWrapperMixin):
     @classmethod
     def from_config(cls, cfg: dict) -> "LLM":
         return cls(
-            model=cfg.get("model"),
+            model=cfg.get("model", "mistral-medium-latest"),
             temperature=cfg.get("temperature", 0.3),
             max_completion_tokens=cfg.get("max_completion_tokens", 150),
             timeout=cfg.get("timeout", 15),

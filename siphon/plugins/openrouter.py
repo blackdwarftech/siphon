@@ -59,10 +59,10 @@ class LLM(ClientWrapperMixin):
     @classmethod
     def from_config(cls, cfg: dict) -> "LLM":
         return cls(
-            model=cfg.get("model"),
-            base_url=cfg.get("base_url"),
+            model=cfg.get("model", "openai/gpt-4.1-nano"),
+            base_url=cfg.get("base_url", "https://openrouter.ai/api/v1"),
             temperature=cfg.get("temperature", 0.3),
-            max_completion_tokens=cfg.get("max_completion_tokens"),
+            max_completion_tokens=cfg.get("max_completion_tokens", 150),
             parallel_tool_calls=cfg.get("parallel_tool_calls", True),
             timeout=cfg.get("timeout", 15)
         )

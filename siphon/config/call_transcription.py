@@ -27,8 +27,15 @@ class CallTranscription:
         # - anything else → local folder path
         self.transcription_location = os.getenv("TRANSCRIPTION_LOCATION", "Transcriptions")
 
-    async def _save_conversation(self) -> None:
-        """Persist the collected conversation using the configured backend."""
+    async def _save_conversation(self, s3_key: str = None) -> None:
+        """Persist the collected conversation using the configured backend.
+        
+        Args:
+            s3_key: Optional S3 key (typically the recording filename) to co-locate
+                    the transcription alongside the recording in the same S3 folder.
+                    When provided, the transcription file will be stored in the same
+                    directory as the corresponding recording rather than a separate path.
+        """
         try:
             ctx = get_job_context()
             if ctx is None:
@@ -37,7 +44,7 @@ class CallTranscription:
             payload = {"conversation": self.conversation_history}
 
             store = get_data_store(self.transcription_location, kind="transcription")
-            await store.save(payload, ctx.room.name)
+            await store.save(payload, ctx.room.name, s3_key=s3_key)
             logger.info("Call transcription saved")
         except Exception as e:
             logger.error(f"Error saving call transcription: {e}")
@@ -49,7 +56,7 @@ class CallTranscription:
         
         # Extract text content
         content = item.text_content
-        if not content and item.content:
+        if content is None and item.content:
             # Handle different content types
             content_parts = []
             for content_item in item.content:
@@ -58,16 +65,21 @@ class CallTranscription:
                 elif isinstance(content_item, ImageContent):
                     content_parts.append("[image]")
                 elif isinstance(content_item, AudioContent):
-                    content_parts.append(f"[audio: {content_item.transcript}]")
+                    transcript = getattr(content_item, 'transcript', None)
+                    content_parts.append(f"[audio: {transcript}]" if transcript else "[audio]")
             content = " ".join(content_parts)
         
         if content:
             logger.info(f"{role.capitalize()} message: {content}")
+            if self.tz is not None:
+                timestamp = datetime.now(self.tz).strftime("%Y-%m-%d %I:%M:%S %p %Z")
+            else:
+                timestamp = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p") + " Local"
             self.conversation_history.append({
                 "role": role,
                 "content": content,
                 "interrupted": getattr(item, 'interrupted', False),
-                "timestamp": datetime.now(self.tz).strftime("%Y-%m-%d %I:%M:%S %p %Z")
+                "timestamp": timestamp
             })
 
     def setup_conversation_monitoring(self, session) -> None:

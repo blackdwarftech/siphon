@@ -51,8 +51,8 @@ class LLM(ClientWrapperMixin):
     @classmethod
     def from_config(cls, cfg: dict) -> "LLM":
         return cls(
-            model=cfg.get("model"),
-            base_url=cfg.get("base_url"),
+            model=cfg.get("model", "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
+            base_url=cfg.get("base_url", "https://api.together.xyz/v1"),
             temperature=cfg.get("temperature", 0.3),
             parallel_tool_calls=cfg.get("parallel_tool_calls", True),
         )
