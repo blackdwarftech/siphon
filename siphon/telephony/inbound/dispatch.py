@@ -4,6 +4,7 @@ from .trunk import Trunk
 import json
 import asyncio
 from siphon.config import get_logger
+from ..utils import validate_phone_number
 
 logger = get_logger("dispatch")
 
@@ -30,7 +31,7 @@ class Dispatch:
         self.dispatch_name = dispatch_name
 
         self.sip_trunk_id = sip_trunk_id
-        self.sip_number = sip_number
+        self.sip_number = validate_phone_number(sip_number) if sip_number else None
 
         self.llm = llm
         self.tts = tts
@@ -109,7 +110,7 @@ class Dispatch:
             await self._setup_trunk()
         except Exception as e:
             logger.error("Failed to set up SIP trunk: %s", e)
-            return {"Error": e}
+            return {"error": str(e)}
 
         lkapi = api.LiveKitAPI()
 
@@ -138,13 +139,29 @@ class Dispatch:
             return dispatch
         except Exception as e:
             return {
-                "Error": e
+                "error": str(e)
             }
         finally:
             await lkapi.aclose()
 
     def agent(self):
-       return asyncio.run(self.agent_dispatch())
+        """Synchronous wrapper to dispatch the inbound agent.
+        
+        NOTE: This must be called from a non-async context. 
+        If calling from an async context, await `agent_dispatch()` directly.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        
+        if loop is not None:
+            raise RuntimeError(
+                "Dispatch.agent() cannot be called from within an async context. "
+                "Use `await dispatch.agent_dispatch()` instead."
+            )
+        
+        return asyncio.run(self.agent_dispatch())
 
 
     async def get_dispatch_rule(
@@ -167,7 +184,7 @@ class Dispatch:
             return {
                 "dispatch_rules": [],
                 "count": 0,
-                "Error": "Either dispatch_id or sip_number must be provided"
+                "error": "Either dispatch_id or sip_number must be provided"
             }
 
         lkapi = api.LiveKitAPI()
@@ -193,13 +210,13 @@ class Dispatch:
                 return {
                     "dispatch_rules": [],
                     "count": 0,
-                    "Error": "No dispatch rule found"
+                    "error": "No dispatch rule found"
                 }
         except Exception as e:
             return {
                 "dispatch_rules": [],
                 "count": 0,
-                "Error": str(e),
+                "error": str(e),
             }
         finally:
             await lkapi.aclose()
@@ -258,7 +275,7 @@ class Dispatch:
                 "success": False,
                 "deleted_count": 0,
                 "deleted_ids": [],
-                "Error": "Either dispatch_id or sip_number must be provided"
+                "error": "Either dispatch_id or sip_number must be provided"
             }
 
         lkapi = api.LiveKitAPI()
@@ -277,12 +294,11 @@ class Dispatch:
                 rule_info = await self.get_dispatch_rule(sip_number=sip_number)
                 
                 if rule_info.get("count", 0) == 0:
-                    await lkapi.aclose()
                     return {
                         "success": False,
                         "deleted_count": 0,
                         "deleted_ids": [],
-                        "Error": f"No dispatch rule found for number {sip_number}"
+                        "error": f"No dispatch rule found for number {sip_number}"
                     }
                 
                 rules_to_delete = rule_info.get("dispatch_rules", [])
@@ -304,7 +320,7 @@ class Dispatch:
                 "success": False,
                 "deleted_count": len(deleted_ids),
                 "deleted_ids": deleted_ids,
-                "Error": str(e),
+                "error": str(e),
             }
         finally:
             await lkapi.aclose()

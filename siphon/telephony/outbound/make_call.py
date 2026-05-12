@@ -6,6 +6,7 @@ import uuid
 import asyncio
 
 from .trunk import Trunk
+from ..utils import validate_phone_number
 from siphon.config import get_logger
 
 logger = get_logger("make-call")
@@ -27,7 +28,7 @@ class Call:
         sip_trunk_id: Optional[str] = None,
         number_to_call_from: Optional[str] = None,
         sip_trunk_setup: Optional[SIPConfig] = None,
-        number_to_call: str = None,
+        number_to_call: Optional[str] = None,
         llm: Optional[Any] = None,
         stt: Optional[Any] = None,
         tts: Optional[Any] = None,
@@ -63,6 +64,8 @@ class Call:
 
         if self.number_to_call is None:
             raise ValueError("number_to_call is required")
+        
+        self.number_to_call = validate_phone_number(self.number_to_call)
 
         #----- SIP Config -----
         if isinstance(sip_trunk_setup, dict):
@@ -213,7 +216,6 @@ class Call:
         except Exception as e:
             logger.error("Failed to create dispatch: %s", e)
             result["error"] = f"dispatch_error: {e}"
-            await lkapi.aclose()
             return result
 
         try:
@@ -237,14 +239,44 @@ class Call:
                 sip_message = e.metadata.get("sip_status")
                 logger.error("SIP Status: %s - %s", sip_status, sip_message)
             result["error"] = f"sip_error: {e.message}"
+            # Clean up orphaned dispatch
+            try:
+                await lkapi.agent_dispatch.delete_dispatch(
+                    api.DeleteAgentDispatchRequest(room=id, dispatch_id=result["dispatch_id"])
+                )
+            except Exception:
+                pass
         except Exception as e:
             logger.error("Error creating SIP participant: %s", e)
             result["error"] = f"sip_error: {e}"
+            # Clean up orphaned dispatch
+            try:
+                await lkapi.agent_dispatch.delete_dispatch(
+                    api.DeleteAgentDispatchRequest(room=id, dispatch_id=result["dispatch_id"])
+                )
+            except Exception:
+                pass
         finally:
             await lkapi.aclose()
 
         return result
 
     def start(self):
+        """Synchronous wrapper to start the outbound call.
+        
+        NOTE: This must be called from a non-async context.
+        If calling from an async context, await `start_call()` directly.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        
+        if loop is not None:
+            raise RuntimeError(
+                "Call.start() cannot be called from within an async context. "
+                "Use `await call.start_call()` instead."
+            )
+        
         return asyncio.run(self.start_call())
 

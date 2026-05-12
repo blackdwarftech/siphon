@@ -45,8 +45,8 @@ class STT(ClientWrapperMixin):
     @classmethod
     def from_config(cls, cfg: dict) -> "STT":
         return cls(
-            language=cfg.get("language", "en"),
-            model=cfg.get("model", "saarika:v2.5"),
+            language=cfg.get("language", "unknown"),
+            model=cfg.get("model", "saaras:v3"),
         )
 
 

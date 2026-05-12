@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "siphon-ai"
-version = "0.1.3"
+version = "0.1.4"
 description = "Build calling agents in minutes, not months. The missing infrastructure layer for AI calling. Siphon handles state, interruptions, and scaling so you can ship reliable agents in minutes, not months."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -83,38 +83,45 @@ keywords = [
 # You can later refine this into smaller core deps + extras.
 
 dependencies = [
-    "livekit",
-    "livekit-api",
-    "livekit-agents>=1.5.1",
-    "boto3",
-    "python-dotenv",
-    "livekit-plugins-noise-cancellation",
-    "livekit-agents[silero]",
-    "livekit-agents[turn-detector]",
-    "pymongo",
-    "motor",
-    "redis",
-    "sqlalchemy",
-    "asyncpg",
-    "aiomysql",
-    "psycopg2",
-    "pymysql",
-    "aioboto3",
-    "livekit-agents[openai]",
-    "livekit-agents[google]",
-    "livekit-agents[anthropic]",
-    "livekit-agents[groq]",
-    "livekit-agents[mistralai]",
-    "livekit-agents[deepgram]",
-    "livekit-agents[assemblyai]",
-    "livekit-agents[cartesia]",
-    "livekit-agents[sarvam]",
-    "livekit-agents[elevenlabs]",
-    "livekit-agents[rime]",
-    "google-auth-oauthlib",
-    "google-auth-httplib2",
-    "google-api-python-client",
+    "livekit>=0.20.0",
+    "livekit-api>=0.8.0",
+    "livekit-agents[turn-detector,silero]>=1.5.1",
+    "boto3>=1.34.0",
+    "python-dotenv>=1.0.0",
+    "livekit-plugins-noise-cancellation>=0.2.0",
 ]
+
+[project.optional-dependencies]
+# Database backends (choose one or more)
+mongodb = ["pymongo>=4.7.0", "motor>=3.5.0", "certifi>=2024.0.0"]
+redis = ["redis>=5.0.0"]
+postgres = ["sqlalchemy>=2.0.0", "asyncpg>=0.29.0", "psycopg2-binary>=2.9.0"]
+mysql = ["sqlalchemy>=2.0.0", "aiomysql>=0.2.0", "pymysql>=1.1.0"]
+all-db = ["siphon-ai[mongodb,redis,postgres,mysql]"]
+
+# AI provider plugins (choose one or more)
+openai = ["livekit-agents[openai]>=1.5.1"]
+google = ["livekit-agents[google]>=1.5.1"]
+anthropic = ["livekit-agents[anthropic]>=1.5.1"]
+groq = ["livekit-agents[groq]>=1.5.1"]
+mistralai = ["livekit-agents[mistralai]>=1.5.1"]
+deepgram = ["livekit-agents[deepgram]>=1.5.1"]
+assemblyai = ["livekit-agents[assemblyai]>=1.5.1"]
+cartesia = ["livekit-agents[cartesia]>=1.5.1"]
+sarvam = ["livekit-agents[sarvam]>=1.5.1"]
+elevenlabs = ["livekit-agents[elevenlabs]>=1.5.1"]
+rime = ["livekit-agents[rime]>=1.5.1"]
+all-llm = ["siphon-ai[openai,google,anthropic,groq,mistralai,deepgram,assemblyai,cartesia,sarvam,elevenlabs,rime]"]
+
+# Google Calendar integration
+gcalendar = ["google-auth-oauthlib>=1.2.0", "google-auth-httplib2>=0.2.0", "google-api-python-client>=2.130.0"]
+
+# Dev / test dependencies
+dev = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0", "pytest-cov>=4.1.0"]
+test = ["siphon-ai[dev]"]
+
+# Everything
+all = ["siphon-ai[all-db,all-llm,gcalendar]"]
 
 [project.urls]
 Homepage = "https://siphon.blackdwarf.in/"

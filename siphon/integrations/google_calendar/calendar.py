@@ -1,4 +1,4 @@
-from livekit.agents import RunContext, function_tool
+from livekit.agents import function_tool
 from siphon.config import get_logger
 from . import services
 

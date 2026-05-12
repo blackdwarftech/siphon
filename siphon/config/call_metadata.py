@@ -1,4 +1,5 @@
 import time
+import copy
 from livekit.agents import get_job_context
 from .logging_config import get_logger
 from .timezone_utils import get_timezone_name, format_timestamp
@@ -6,6 +7,14 @@ from .data_storage import get_data_store
 import os
 
 logger = get_logger("calling-agent")
+
+def _normalize_timestamp(ts):
+    if not ts:
+        return time.time()
+    if ts > 1e12:  # nanoseconds
+        return ts / 1e9
+    return ts  # already seconds
+
 
 
 class CallMetadata:
@@ -32,6 +41,8 @@ class CallMetadata:
 
     def __init__(self, config):
         ctx = get_job_context()
+        if ctx is None:
+            raise RuntimeError("No job context available for CallMetadata")
         self.ctx = ctx
 
         self.config = config
@@ -48,23 +59,38 @@ class CallMetadata:
         room_name = self.ctx.room.name
         return {"room_name": room_name}
 
-    def _determine_call_direction(self) -> tuple:
+    def _determine_call_direction(self) -> tuple[str, dict[str, str]]:
         """Determine call direction and return direction info"""
         outbound_trunk_id = self.config.get("outbound_trunk_id")
         inbound_trunk_id = self.config.get("inbound_trunk_id")
         number_to_call = self.config.get("number_to_call")
 
-        if number_to_call or outbound_trunk_id:
+        # Use explicit outbound_trunk_id as primary indicator
+        # number_to_call alone is not sufficient (could be misconfigured)
+        if outbound_trunk_id:
             direction = "outbound"
             trunk_info = {
                 "outbound_trunk_id": outbound_trunk_id,
+                "inbound_trunk_id": "",
+            }
+        elif inbound_trunk_id:
+            direction = "inbound"
+            trunk_info = {
+                "outbound_trunk_id": "",
+                "inbound_trunk_id": inbound_trunk_id,
+            }
+        elif number_to_call:
+            # Fallback: if only number_to_call is present, assume outbound
+            direction = "outbound"
+            trunk_info = {
+                "outbound_trunk_id": "",
                 "inbound_trunk_id": "",
             }
         else:
             direction = "inbound"
             trunk_info = {
                 "outbound_trunk_id": "",
-                "inbound_trunk_id": inbound_trunk_id,
+                "inbound_trunk_id": "",
             }
             
         logger.info(f"Call direction determined as: {direction}")
@@ -87,7 +113,7 @@ class CallMetadata:
         final_numbers = {}
         for k, v in numbers.items():
             prev = self.phone_numbers.get(k)
-            final_numbers[k] = prev if prev else v
+            final_numbers[k] = prev if prev is not None else v
 
         # Store the numbers for later updates
         self.phone_numbers.update(final_numbers)
@@ -153,7 +179,7 @@ class CallMetadata:
         """Save metadata to both MongoDB and local file"""
         metadata_location = os.getenv("METADATA_LOCATION", "Call_Metadata")
 
-        metadata_copy = metadata.copy()
+        metadata_copy = copy.deepcopy(metadata)
         if "_id" in metadata_copy:
             del metadata_copy["_id"]  # Remove ObjectId before saving to JSON
 
@@ -176,10 +202,11 @@ class CallMetadata:
             None
         """
         try:
-            # Prevent duplicate saves
+            # Prevent duplicate saves — set flag BEFORE await to close race window
             if getattr(self, "_metadata_saved", False):
                 logger.warning("Metadata already saved, skipping unanswered-call duplicate save")
                 return
+            self._metadata_saved = True
             logger.info(f"Saving unanswered call metadata. Reason: {reason}")
             
             # Build base metadata
@@ -201,9 +228,9 @@ class CallMetadata:
             
             # Save to Database
             await self._save_metadata_to_storage(metadata)
-            self._metadata_saved = True
         
         except Exception as e:
+            self._metadata_saved = False  # Reset so retry can attempt again
             logger.error(f"Error saving unanswered call metadata (non-critical): {e}")
 
     async def save_call_metadata(self, response) -> None:
@@ -217,10 +244,11 @@ class CallMetadata:
             None
         """
         try:
-            # Prevent duplicate saves
+            # Prevent duplicate saves — set flag BEFORE await to close race window
             if getattr(self, "_metadata_saved", False):
                 logger.warning("Metadata already saved, skipping duplicate save")
                 return
+            self._metadata_saved = True
             logger.info(f"Saving call metadata. Response: {response}")
             
             # Build base metadata
@@ -235,8 +263,8 @@ class CallMetadata:
             
             if response:
                 # Extract timestamps from response
-                start_timestamp = response.started_at / 1e9 if hasattr(response, 'started_at') and response.started_at else time.time()
-                end_timestamp = response.ended_at / 1e9 if hasattr(response, 'ended_at') and response.ended_at else time.time()
+                start_timestamp = _normalize_timestamp(response.started_at) if hasattr(response, 'started_at') and response.started_at else time.time()
+                end_timestamp = _normalize_timestamp(response.ended_at) if hasattr(response, 'ended_at') and response.ended_at else time.time()
                 
                 # Set timing metadata
                 self._set_timing_metadata(metadata, start_timestamp, end_timestamp)
@@ -276,7 +304,7 @@ class CallMetadata:
             
             # Save to Database
             await self._save_metadata_to_storage(metadata)
-            self._metadata_saved = True
         
         except Exception as e:
+            self._metadata_saved = False  # Reset so retry can attempt again
             logger.error(f"Error saving call metadata (non-critical): {e}")

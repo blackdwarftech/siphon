@@ -5,9 +5,9 @@ from typing import AsyncIterable, Optional
 from livekit.agents.voice import Agent, ModelSettings
 from livekit import rtc
 from livekit.agents import ChatContext
-from siphon.config import get_logger, HangupCall, CallTranscription
+from siphon.config import get_logger, HangupCall, CallTranscription, _redact_phone
 from siphon.config.timezone_utils import get_timezone, get_timezone_name
-from siphon.agent.internal_prompts import call_agent_prompt
+from siphon.agent.internal_prompts import call_agent_prompt, datetime_awareness_prompt
 import os
 
 logger = get_logger("calling-agent")
@@ -48,30 +48,36 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
         greeting_instructions: str,
         system_instructions: str, 
         interruptions_allowed: bool,
-        room: rtc.Room = None,
+        room: Optional[rtc.Room] = None,
         phone_number: Optional[str] = None,
         remember_call: bool = False,
         memory_service: Optional[MemoryService] = None,
+        date_time: bool = True,
     ) -> None:
         """Thin wrapper around LiveKit's voice Agent with greeting behavior.
 
         The config dict mirrors the job metadata and can be extended over time
         without changing the core AgentSession wiring.
         """
-        hangup_flag = os.getenv("HANGUP_CALL", "true").strip().lower()
-        recording_flag = os.getenv("CALL_RECORDING", "false").strip().lower()
-        metadata_flag = os.getenv("SAVE_METADATA", "false").strip().lower()
-        transcription_flag = os.getenv("SAVE_TRANSCRIPTION", "false").strip().lower()
+        def _parse_env_bool(var_name: str, default: str) -> bool:
+            """Parse an environment variable as a boolean.
+            
+            Accepts: 'true', '1', 'yes', 'on' (case-insensitive) as True
+            Everything else (including empty string) is False.
+            """
+            value = os.getenv(var_name, default).strip().lower()
+            return value in ("true", "1", "yes", "on")
 
-        self.hangup_call = hangup_flag != "false"
-        self.call_recording = recording_flag == "true"
-        self.save_metadata = metadata_flag == "true"
-        self.save_transcription = transcription_flag == "true"
+        self.hangup_call = _parse_env_bool("HANGUP_CALL", "true")
+        self.call_recording = _parse_env_bool("CALL_RECORDING", "false")
+        self.save_metadata = _parse_env_bool("SAVE_METADATA", "false")
+        self.save_transcription = _parse_env_bool("SAVE_TRANSCRIPTION", "false")
         
         # Call memory settings
         self._call_memory_phone = phone_number
         self._call_memory_enabled = remember_call
         self._memory_service = memory_service
+        self.date_time = date_time
 
         # Initializing Config
         self.config = config
@@ -106,6 +112,7 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
             base_instructions + 
             "\n\n" + datetime_stamp +
             "\n\n" + call_agent_prompt +
+            ("\n\n" + datetime_awareness_prompt if self.date_time else "") +
             ("\n\n" + calendar_context if calendar_context else "") +
             ("\n\n" + memory_context if memory_context else "")
         )
@@ -219,7 +226,7 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
             if self._memory_service:
                 self._memory_service.update_phone_number(phone_number)
 
-            logger.info(f"Updated call memory phone number: {phone_number}")
+            logger.info(f"Updated call memory phone number: {_redact_phone(phone_number)}")
 
     # Agent lifecycle
     async def on_enter(self):
@@ -228,12 +235,18 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
         self.call_start_time = time.time()
         logger.info("Agent entering room...")
 
-        await asyncio.gather(
+        results = await asyncio.gather(
             self._setup_recording_task(),
             self._setup_monitoring_task(),
             self._send_greeting_task(),
             return_exceptions=True
         )
+        
+        # Check for failures and log them
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                task_names = ["recording", "monitoring", "greeting"]
+                logger.error(f"Task '{task_names[i]}' failed during on_enter: {result}", exc_info=result)
     
     async def on_exit(self):
         # If this call was never actually answered, HangupCall.handle_unanswered_call
@@ -247,17 +260,23 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
         # Stopping the call recording before ending the call
         if self.call_recording:
             try:
-                self.response = await self.stop_recording()
+                recording_response = await self.stop_recording()
+                # Only update self.response if stop_recording succeeded
+                if recording_response is not None:
+                    self.response = recording_response
                 logger.info(f"Stopped recording before ending call. Response: {self.response}")
             except Exception as e:
                 logger.error(f"Error stopping recording before ending call: {e}")
-                self.response = None
+                # Don't overwrite self.response on error - preserve any existing value
 
         if self.save_metadata:
             await self.save_call_metadata(self.response)
 
         if self.save_transcription:
-            await self._save_conversation()
+            transcription_s3_key = None
+            if self.response and hasattr(self.response, 'file_results') and self.response.file_results:
+                transcription_s3_key = getattr(self.response.file_results[0], 'filename', None)
+            await self._save_conversation(s3_key=transcription_s3_key)
         
         # Save call memory if enabled via MemoryService
         if self._call_memory_enabled and self._memory_service:
@@ -266,8 +285,13 @@ class AgentSetup(Agent, HangupCall, CallTranscription):
                 session = getattr(self, 'session', None)
                 session_llm = getattr(session, 'llm', None) if session else None
                 self_llm = getattr(self, 'llm', None)
-                config_llm = self.config.get("llm") if hasattr(self, 'config') else None
-                actual_llm = session_llm or self_llm or config_llm
+                
+                # config_llm is a raw dict, not an LLM object - don't use it directly
+                actual_llm = session_llm or self_llm
+                
+                if actual_llm is None:
+                    logger.error("No LLM available for memory summarization - skipping memory save")
+                    return
                 
                 await self._memory_service.save(
                     phone_number=self._call_memory_phone,

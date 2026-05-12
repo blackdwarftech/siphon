@@ -4,7 +4,7 @@ Defines the data structures for conversation summaries, caller memory, and extra
 Uses a text-based summary approach with optional structured caller identity.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
@@ -23,37 +23,39 @@ class CallerProfile(BaseModel):
     def merge(self, other: "CallerProfile") -> "CallerProfile":
         """Merge another profile into this one. Newer non-None values take precedence."""
         return CallerProfile(
-            name=other.name or self.name,
-            phone=other.phone or self.phone,
-            email=other.email or self.email,
-            preferences=other.preferences or self.preferences,
+            name=other.name if other.name is not None else self.name,
+            phone=other.phone if other.phone is not None else self.phone,
+            email=other.email if other.email is not None else self.email,
+            preferences=other.preferences if other.preferences is not None else self.preferences,
         )
 
 
 class ConversationSummary(BaseModel):
     """A single conversation summary from one call."""
     
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="When the call occurred (UTC)")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="When the call occurred (UTC)")
     summary: str = Field(..., description="2-3 sentence summary of the conversation (max 500 chars)", max_length=500)
     call_number: int = Field(..., ge=1, description="Which call this was (1, 2, 3, etc.)")
     
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat()}
+    model_config = {
+        "json_encoders": {datetime: lambda v: v.isoformat()}
+    }
 
 
 class CallerMemory(BaseModel):
     """Complete memory profile for a caller using conversation summaries."""
     
     phone_number: str = Field(..., description="Normalized phone number as identifier")
-    first_call_date: datetime = Field(default_factory=datetime.utcnow)
-    last_call_date: datetime = Field(default_factory=datetime.utcnow)
+    first_call_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_call_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     total_calls: int = Field(default=0, ge=0)
     summaries: List[ConversationSummary] = Field(default_factory=list)
     caller_profile: Optional[CallerProfile] = Field(default=None, description="Structured caller identity")
     
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat()}
-        extra = "ignore"
+    model_config = {
+        "json_encoders": {datetime: lambda v: v.isoformat()},
+        "extra": "ignore"
+    }
 
 
 class SummaryResult(BaseModel):

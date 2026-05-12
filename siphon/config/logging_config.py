@@ -8,8 +8,9 @@ from typing import Optional
 class PackageRenamingFilter(logging.Filter):
     """Filter to rename third-party package loggers to Siphon branding."""
     def filter(self, record: logging.LogRecord) -> bool:
+        # Only replace the 'livekit' prefix, not all occurrences
         if record.name.startswith("livekit"):
-            record.name = record.name.replace("livekit", "siphon")
+            record.name = "siphon" + record.name[len("livekit"):]
         return True
 
 def configure_logging(level: int = logging.INFO, fmt: Optional[str] = None) -> None:
@@ -40,6 +41,19 @@ def configure_logging(level: int = logging.INFO, fmt: Optional[str] = None) -> N
         # Avoid adding duplicate filters
         if not any(isinstance(f, PackageRenamingFilter) for f in h.filters):
             h.addFilter(PackageRenamingFilter())
+
+
+def _redact_phone(phone: Optional[str]) -> str:
+    """Redact a phone number for safe logging.
+    
+    Masks all but the last 4 digits. Returns '<none>' for empty/None input.
+    """
+    if not phone:
+        return "<none>"
+    digits = "".join(c for c in phone if c.isdigit())
+    if len(digits) <= 4:
+        return "***" + digits[-2:] if len(digits) >= 2 else "***"
+    return digits[:2] + "***" + digits[-4:]
 
 
 def get_logger(name: str) -> logging.Logger:

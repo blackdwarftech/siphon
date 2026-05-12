@@ -66,12 +66,12 @@ class ConversationSummarizer:
     async def summarize(self, conversation_history: List[Dict[str, Any]]) -> SummaryResult:
         """Generate a summary of the conversation."""
         if not self._is_valid_history(conversation_history):
-            return SummaryResult(success=True)
+            return SummaryResult(success=True, error_message="No conversation history to summarize")
 
         conversation_text = self._format_conversation(conversation_history)
         if not conversation_text.strip():
             logger.debug("Empty conversation text after formatting")
-            return SummaryResult(success=True)
+            return SummaryResult(success=True, error_message="No conversation history to summarize")
 
         try:
             prompt = SUMMARIZATION_PROMPT.format(conversation_text=conversation_text)
@@ -197,21 +197,33 @@ class ConversationSummarizer:
 
     async def _generate(self, prompt: str) -> Optional[str]:
         """Generate text using the configured LLM."""
+        result = None
+        last_error = None
+        
         # Try LiveKit LLM first
         if hasattr(self.llm, 'chat') and callable(getattr(self.llm, 'chat')):
             try:
-                return await self._generate_with_livekit(prompt)
+                result = await self._generate_with_livekit(prompt)
+                if result:
+                    return result
             except Exception as e:
                 logger.debug(f"LiveKit generation failed: {e}")
+                last_error = e
         
         # Try OpenAI-style interface as fallback
         if hasattr(self.llm, 'chat') and hasattr(self.llm.chat, 'completions'):
             try:
-                return await self._generate_with_openai(prompt)
+                result = await self._generate_with_openai(prompt)
+                if result:
+                    return result
             except Exception as e:
                 logger.debug(f"OpenAI generation failed: {e}")
+                last_error = e
         
-        logger.error("No compatible LLM interface found")
+        if last_error:
+            logger.error(f"All LLM interfaces failed. Last error: {last_error}")
+        else:
+            logger.error("No compatible LLM interface found or all returned empty results")
         return None
 
     async def _generate_with_livekit(self, prompt: str) -> Optional[str]:

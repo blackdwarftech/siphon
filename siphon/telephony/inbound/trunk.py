@@ -3,15 +3,21 @@ from livekit import api
 from livekit.protocol.sip import ListSIPInboundTrunkRequest
 import uuid
 
+from ..utils import validate_phone_number
+
 
 class Trunk:
     """Small helper for managing LiveKit SIP Inbound trunks."""
 
     async def create_trunk(
         self,
-        name: Optional[str] = uuid.uuid4().hex,
-        sip_number: str = None,
+        name: Optional[str] = None,
+        sip_number: Optional[str] = None,
     ) -> Dict[str, Any]:
+        sip_number = validate_phone_number(sip_number)
+        if name is None:
+            name = uuid.uuid4().hex
+
         lkapi = api.LiveKitAPI()
 
         trunk = api.SIPInboundTrunkInfo(
@@ -33,7 +39,7 @@ class Trunk:
         except Exception as e:
             return {
                 "trunk_id": None,
-                "Error": e
+                "error": str(e)
             }
         finally:
             await lkapi.aclose()
@@ -42,9 +48,13 @@ class Trunk:
     async def get_trunk(self, sip_number: str) -> Dict[str, Any]:
         """Look up an existing inbound trunk by phone number.
 
-        Returns a dict with keys:
-          - trunk_id: the trunk id if found, else None
+        Args:
+            sip_number: Phone number to look up.
+
+        Returns:
+            Dict with trunk_id if found, else None.
         """
+        sip_number = validate_phone_number(sip_number)
         lkapi = api.LiveKitAPI()
 
         try:
@@ -66,7 +76,7 @@ class Trunk:
         except Exception as e:
             return {
                 "trunk_id": None,
-                "Error": e,
+                "error": str(e),
             }
         finally:
             await lkapi.aclose()
@@ -104,7 +114,7 @@ class Trunk:
             return {
                 "trunk_id": None,
                 "sip_number": None,
-                "Error": e,
+                "error": str(e),
             }
         finally:
             await lkapi.aclose()
@@ -130,7 +140,7 @@ class Trunk:
             return {
                 "success": False,
                 "trunk_id": None,
-                "Error": "Either trunk_id or sip_number must be provided"
+                "error": "Either trunk_id or sip_number must be provided"
             }
 
         lkapi = api.LiveKitAPI()
@@ -145,7 +155,7 @@ class Trunk:
                     return {
                         "success": False,
                         "trunk_id": None,
-                        "Error": f"No trunk found for number {sip_number}"
+                        "error": f"No trunk found for number {sip_number}"
                     }
 
             # Delete the trunk using the trunk_id
@@ -160,7 +170,7 @@ class Trunk:
             return {
                 "success": False,
                 "trunk_id": trunk_id,
-                "Error": e,
+                "error": str(e),
             }
         finally:
             await lkapi.aclose()

@@ -19,6 +19,9 @@ call_agent_prompt = """
 - Track what you committed to do across turns — don't forget pending tasks
 - Report results when ready, even if user changed topic: "Also, regarding..."
 
+"""
+
+datetime_awareness_prompt = """
 **4. Date/Time Awareness (MANDATORY):**
 - ALWAYS call get_current_datetime() BEFORE any time-related operation
 - Convert relative terms ("tomorrow", "next week") to ISO 8601: YYYY-MM-DDTHH:MM:SS+HH:MM

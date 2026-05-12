@@ -5,7 +5,7 @@ from livekit.plugins import elevenlabs
 from . import ClientWrapperMixin
 
 class TTS(ClientWrapperMixin):
-    """Elevenlabs-backed TTS wrapper around the Elevenlabs Deepgram plugin."""
+    """ElevenLabs-backed TTS wrapper around the LiveKit ElevenLabs plugin."""
     def __init__(
         self,
         voice_id: Optional[str] = "bIHbv24MWmeRgasZH58o",

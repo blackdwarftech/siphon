@@ -51,7 +51,7 @@ class LLM(ClientWrapperMixin):
     @classmethod
     def from_config(cls, cfg: dict) -> "LLM":
         return cls(
-            model=cfg.get("model"),
+            model=cfg.get("model", "claude-3-5-sonnet-20241022"),
             max_tokens=cfg.get("max_tokens", 150),
             temperature=cfg.get("temperature", 0.3),
             parallel_tool_calls=cfg.get("parallel_tool_calls", True)

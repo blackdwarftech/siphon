@@ -44,7 +44,8 @@ class STT(ClientWrapperMixin):
             "provider": "cartesia",
             "model": self.model,
             "sample_rate": self.sample_rate,
-            "language": self.language
+            "language": self.language,
+            "base_url": self.base_url
         }
 
     # Recreate STT from config dict
@@ -54,6 +55,7 @@ class STT(ClientWrapperMixin):
             model=cfg.get("model", "ink-whisper"),
             language=cfg.get("language", "en"),
             sample_rate=cfg.get("sample_rate", 16000),
+            base_url=cfg.get("base_url", "https://api.cartesia.ai"),
         )
 
 class TTS(ClientWrapperMixin):

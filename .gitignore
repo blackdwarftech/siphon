@@ -8,12 +8,19 @@ BRD.md
 SRD.md
 .env.local
 .env.*
+!.env.example
 .opencode
 requirements.txt
 docs/
-agent.py
-call.py
+# Only ignore these in the testing directory, not everywhere
+/testing/agent.py
+/testing/call.py
 .scannerwork
 .pytest_cache
 .claude
 testing/
+graphify-out/
+AGENTS.md
+research/
+.pi/
+tests/
