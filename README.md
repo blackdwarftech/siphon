@@ -129,5 +129,5 @@ Please see our [CONTRIBUTING.md](https://github.com/blackdwarftech/siphon/blob/m
 
 ## ⚖️ License
 
-Siphon is released under the [Apache 2.0 License](https://github.com/blackdwarftech/siphon/blob/main/LICENSE). Built with ❤️ by **BLACKDWARF**.
+Siphon is released under the [Apache 2.0 License](https://github.com/blackdwarftech/siphon/blob/main/LICENSE). Built with 💜 by **BLACKDWARF**.
 
