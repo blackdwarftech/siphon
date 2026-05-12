@@ -18,7 +18,7 @@
 Stop renting your core telephony stack from managed platforms (Eg: Vapi, Retell...etc). Bridge legacy SIP to modern LLMs over ultra-low latency WebRTC pipelines, and keep **100% of your margins**.
 
 <div align="center">
-  <img src="flows/siphon-highlevel-flow.png" alt="SIPHON Architecture Diagram" width="800" />
+ <img src="https://github.com/blackdwarftech/siphon/blob/main/flows/siphon-highlevel-flow.png" alt="SIPHON Architecture Diagram" width="800" />
 </div>
 
 ## ⚡ Why Siphon?
