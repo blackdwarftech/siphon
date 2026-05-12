@@ -35,7 +35,7 @@ Building real-time voice agents usually requires stringing together fragile WebS
 
 ## 🚀 Quickstart: Your First AI Calling Agent
 
-Get a fully functional inbound AI receptionist running locally in less than 10 minutes.
+Get a fully functional inbound/outbound AI receptionist running locally in less than 10 minutes.
 
 ### 1. Install Siphon
 ```bash
